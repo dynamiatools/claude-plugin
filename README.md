@@ -32,12 +32,13 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 
 ### Agents
 
-Cheap read-only helpers on Haiku, so the main model does not spend tokens on reading and summarizing:
+Read-only helpers. Three cheap ones run on Haiku so the main model does not spend tokens on reading and summarizing; `ms-agent-boss` runs on Opus for architecture reviews:
 
 | Agent | Use |
 |---|---|
 | `ms-agent-scout` | Finds where code lives (paths and one-line reasons only) |
 | `ms-agent-test-triage` | Classifies a failing test run (code bug, flaky, environment, config, build) and points to the file |
+| `ms-agent-boss` | Opus architecture review of a batch, diff or design: boundaries, contracts, data, security, rollback, tests. Returns a verdict plus blocking and should-fix findings. It delegates discovery to the Haiku agents to save tokens |
 | `ms-agent-summarizer` | Condenses diffs, history and logs; drafts commit messages following each repo's convention |
 
 ### Tools
