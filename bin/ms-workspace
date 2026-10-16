@@ -7,7 +7,13 @@
 # Usage:
 #   ms-workspace batch new <name> [repo...]    create a batch (one worktree per repo, branch int/<name>)
 #   ms-workspace affected                      JSON: changed repos/modules and their dependents
+#   ms-workspace agent new <batch> <task> [repo...]   isolated worktree per agent (branch agent/<batch>/<task>)
 #   ms-workspace test t0                       test what changed in the current repo
+#   ms-workspace test t1 [batch]               affected + critical modules for every changed repo of the batch
+#   ms-workspace test t2 [batch]               end-to-end command from [e2e] in workspace.toml
+#   ms-workspace integrate <batch> [--dry-run] merge agent branches into int/<batch> (conflicts detected first)
+#   ms-workspace ship <batch> [--yes] [--skip-e2e]   sync with base, test, push (plan only without --yes)
+#   ms-workspace clean [<batch>] [--force]     list batches, or remove one that is already merged
 #   ms-workspace log [-n N] [--day YYYY-MM-DD] [--action A]   show recent actions
 #   ms-workspace context                       ~15-line briefing (for a SessionStart hook)
 #   ms-workspace status [--fetch]              one line per repo: branch, ahead/behind base, dirty, batches
@@ -145,30 +151,239 @@ cmd_affected() {
     {repo:$r, files:$n, modules:$mods, dependents:(down([$r]) - [$r])}' <<<"$CFG_JSON"
 }
 
+# ---------- shared batch helpers ----------
+batch_of_cwd() {
+  case "$PWD/" in "$BATCH_DIR"/*) local rest="${PWD#"$BATCH_DIR"/}"; echo "${rest%%/*}" ;; esac
+}
+batch_repos() { find "$BATCH_DIR/$1" -mindepth 1 -maxdepth 1 -type d ! -name '.agents' -printf '%f\n' | sort; }
+base_ref() { # dir base -> origin/<base> when it exists, else <base>
+  if git -C "$1" rev-parse --verify --quiet "origin/$2" >/dev/null; then echo "origin/$2"; else echo "$2"; fi
+}
+ahead_of_base() { git -C "$1" rev-list --count "$(base_ref "$1" "$2")..HEAD"; }
+# Repo names on stdin -> printed in dependency order (dependencies first).
+topo() {
+  local remaining=() next=() r d ready progress
+  mapfile -t remaining
+  while [[ ${#remaining[@]} -gt 0 ]]; do
+    progress=0; next=()
+    for r in "${remaining[@]}"; do
+      ready=1
+      for d in $(cfg --arg r "$r" '.repos[$r].deps[]?'); do
+        if printf '%s\n' "${remaining[@]}" | grep -qx "$d"; then ready=0; break; fi
+      done
+      if [[ $ready -eq 1 ]]; then echo "$r"; progress=1; else next+=("$r"); fi
+    done
+    [[ $progress -eq 1 ]] || { printf '%s\n' "${next[@]}"; return 0; } # dependency cycle: emit the rest
+    remaining=("${next[@]+"${next[@]}"}")
+  done
+}
+need_batch() { # name -> validates, echoes it
+  [[ -n "${1:-}" && -d "$BATCH_DIR/$1" ]] || die "unknown batch '${1:-}' (see: ms-workspace clean)"
+  echo "$1"
+}
+
 # ---------- test ----------
-cmd_test() {
-  need_ws
-  local level="${1:-}"
-  [[ "$level" == "t0" ]] || die "only 't0' is implemented so far"
-  local top repo base mods cmd start rc out
-  top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run inside a repo or batch worktree"
-  repo="$(basename "$top")"; base="$(repo_base "$repo")"
-  cd "$top"
-  mods="$(changed_files "$base" | modules_of | paste -sd, -)"
+# run_tests <repo> <dir> <level>: runs the affected (or full) tests in <dir>; returns the test exit code.
+run_tests() {
+  local repo="$1" dir="$2" level="$3" batch="${4:-$(batch_of_cwd)}" base mods crit cmd out rc=0 start
+  base="$(repo_base "$repo")"
+  mods="$(cd "$dir" && changed_files "$base" | modules_of | paste -sd, -)"
+  if [[ "$level" != "t0" ]]; then
+    crit="$(cfg --arg r "$repo" '.repos[$r].critical // [] | join(",")')"
+    [[ -n "$crit" ]] && mods="$(printf '%s,%s' "$mods" "$crit" | tr ',' '\n' | grep . | sort -u | paste -sd, -)"
+  fi
+  cmd=""
   if [[ -n "$mods" ]]; then cmd="$(cfg --arg r "$repo" '.repos[$r].test.affected // empty')"; cmd="${cmd//\{modules\}/$mods}"; fi
-  [[ -n "${cmd:-}" ]] || cmd="$(cfg --arg r "$repo" '.repos[$r].test.unit // empty')"
+  [[ -n "$cmd" ]] || cmd="$(cfg --arg r "$repo" '.repos[$r].test.unit // empty')"
   [[ -n "$cmd" ]] || die "no test command configured for '$repo' in workspace.toml"
-  mkdir -p "$STATE_DIR"; out="$(mktemp)"; start=$SECONDS; rc=0
+  mkdir -p "$STATE_DIR"; out="$(mktemp)"; start=$SECONDS
   # One heavy run at a time per workspace, so parallel agents don't starve the machine.
-  flock -w 1800 "$STATE_DIR/heavy.lock" bash -c "$cmd" >"$out" 2>&1 || rc=$?
+  (cd "$dir" && flock -w 1800 "$STATE_DIR/heavy.lock" bash -c "$cmd") >"$out" 2>&1 || rc=$?
   if [[ $rc -eq 0 ]]; then
-    echo "PASS t0 $repo ($((SECONDS-start))s): $cmd"
-    log_event test.t0 ok "$repo" "" "$cmd"
+    echo "PASS $level $repo ($((SECONDS-start))s): $cmd"
+    log_event "test.$level" ok "$repo" "$batch" "$cmd"
   else
-    echo "FAIL t0 $repo ($((SECONDS-start))s): $cmd" >&2; tail -n 40 "$out" >&2
-    log_event test.t0 fail "$repo" "" "$cmd"
+    echo "FAIL $level $repo ($((SECONDS-start))s): $cmd" >&2; tail -n 40 "$out" >&2
+    log_event "test.$level" fail "$repo" "$batch" "$cmd"
   fi
   rm -f "$out"; return $rc
+}
+
+run_e2e() { # batch -> runs [e2e].command
+  local cmd erepo dir rc=0 out start=$SECONDS
+  cmd="$(cfg '.e2e.command // empty')"; [[ -n "$cmd" ]] || { echo "no [e2e] command configured" >&2; return 2; }
+  erepo="$(cfg '.e2e.repo // empty')"
+  dir="$WS_ROOT/${erepo:-.}"; [[ -n "$1" && -d "$BATCH_DIR/$1/$erepo" ]] && dir="$BATCH_DIR/$1/$erepo"
+  mkdir -p "$STATE_DIR"; out="$(mktemp)"
+  (cd "$dir" && flock -w 3600 "$STATE_DIR/heavy.lock" bash -c "$cmd") >"$out" 2>&1 || rc=$?
+  if [[ $rc -eq 0 ]]; then echo "PASS t2 e2e ($((SECONDS-start))s): $cmd"; log_event test.t2 ok "$erepo" "$1" "$cmd"
+  else echo "FAIL t2 e2e ($((SECONDS-start))s): $cmd" >&2; tail -n 40 "$out" >&2; log_event test.t2 fail "$erepo" "$1" "$cmd"; fi
+  rm -f "$out"; return $rc
+}
+
+cmd_test() {
+  need_ws
+  local level="${1:-}" batch r wt rc=0
+  case "$level" in
+    t0)
+      local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run inside a repo or batch worktree"
+      run_tests "$(basename "$top")" "$top" t0 ;;
+    t1)
+      batch="$(need_batch "${2:-$(batch_of_cwd)}")"
+      while read -r r; do
+        wt="$BATCH_DIR/$batch/$r"
+        [[ "$(ahead_of_base "$wt" "$(repo_base "$r")")" -gt 0 ]] || { echo "skip $r (no changes vs base)"; continue; }
+        run_tests "$r" "$wt" t1 "$batch" || { rc=$?; break; }
+      done < <(batch_repos "$batch" | topo)
+      return $rc ;;
+    t2)
+      batch="$(need_batch "${2:-$(batch_of_cwd)}")"; run_e2e "$batch" ;;
+    *) die "usage: test t0|t1|t2 [batch]" ;;
+  esac
+}
+
+# ---------- agent new ----------
+cmd_agent() {
+  need_ws
+  [[ "${1:-}" == "new" ]] || die "usage: agent new <batch> <task> [repo...]"; shift
+  local batch task r wt
+  batch="$(need_batch "${1:-}")"; task="${2:?agent new <batch> <task> [repo...]}"; shift 2
+  local repos=("$@"); [[ ${#repos[@]} -gt 0 ]] || mapfile -t repos < <(batch_repos "$batch")
+  for r in "${repos[@]}"; do
+    wt="$BATCH_DIR/$batch/.agents/$task/$r"
+    [[ -d "$BATCH_DIR/$batch/$r" ]] || die "repo '$r' is not part of batch '$batch'"
+    git -C "$BATCH_DIR/$batch/$r" worktree add --no-track -b "agent/$batch/$task" "$wt" "int/$batch" >/dev/null 2>&1 \
+      || die "could not create agent worktree for $r (branch agent/$batch/$task may exist)"
+    log_event agent.new ok "$r" "$batch" "agent/$batch/$task"
+    echo "  $r -> $wt (agent/$batch/$task)"
+  done
+}
+
+# ---------- integrate ----------
+cmd_integrate() {
+  need_ws
+  local batch dry=0 r wt br out files conflict=0
+  batch="$(need_batch "${1:-}")"; shift || true
+  [[ "${1:-}" == "--dry-run" ]] && dry=1
+  while read -r r; do
+    wt="$BATCH_DIR/$batch/$r"
+    [[ $dry -eq 1 || -z "$(git -C "$wt" status --porcelain)" ]] || die "$r: int/$batch worktree has uncommitted changes"
+    for br in $(git -C "$wt" for-each-ref --format='%(refname:short)' "refs/heads/agent/$batch/"); do
+      if git -C "$wt" merge-base --is-ancestor "$br" HEAD; then echo "  $r: $br already merged"; continue; fi
+      if out="$(git -C "$wt" merge-tree --write-tree --name-only HEAD "$br" 2>&1)"; then
+        if [[ $dry -eq 1 ]]; then echo "  $r: $br merges cleanly"
+        else
+          git -C "$wt" merge --no-ff --no-edit -m "Integrate $br" "$br" >/dev/null
+          log_event integrate ok "$r" "$batch" "$br"; echo "  $r: merged $br"
+        fi
+      else
+        files="$(printf '%s\n' "$out" | sed -n '2,/^$/p' | sed '/^$/d' | paste -sd' ' -)"
+        echo "  $r: CONFLICT merging $br -> $files" >&2
+        log_event integrate conflict "$r" "$batch" "$br: $files"; conflict=1
+      fi
+    done
+  done < <(batch_repos "$batch" | topo)
+  if [[ $conflict -eq 1 ]]; then echo "Resolve the conflicts (rebase the agent branch on int/$batch), then run again." >&2; return 1; fi
+  [[ $dry -eq 1 ]] || echo "Integrated. Next: ms-workspace test t1 $batch"
+}
+
+# ---------- ship ----------
+cmd_ship() {
+  need_ws
+  local batch yes=0 skip_e2e=0 r wt base ahead mode arg
+  batch="$(need_batch "${1:-}")"; shift || true
+  for arg in "$@"; do case "$arg" in --yes) yes=1 ;; --skip-e2e) skip_e2e=1 ;; *) die "ship: unknown option $arg" ;; esac; done
+  local repos=()
+  while read -r r; do
+    wt="$BATCH_DIR/$batch/$r"; base="$(repo_base "$r")"
+    [[ -z "$(git -C "$wt" status --porcelain)" ]] || die "$r: uncommitted changes in int/$batch"
+    [[ "$(cfg --arg r "$r" --arg b "$base" '(.repos[$r].release // []) | index($b) != null')" == "false" ]] \
+      || die "$r: base '$base' is a release branch; ship never targets those"
+    git -C "$WS_ROOT/$r" fetch origin "$base" --quiet 2>/dev/null || echo "warn: could not fetch $r/$base" >&2
+    ahead="$(ahead_of_base "$wt" "$base")"
+    [[ "$ahead" -gt 0 ]] || { echo "skip $r (nothing to ship)"; continue; }
+    repos+=("$r")
+  done < <(batch_repos "$batch" | topo)
+  [[ ${#repos[@]} -gt 0 ]] || { echo "Nothing to ship in batch '$batch'."; return 0; }
+
+  echo "Plan for batch '$batch':"
+  for r in "${repos[@]}"; do
+    mode="$(cfg --arg r "$r" '.repos[$r].push // "direct"')"
+    echo "  $r: int/$batch -> $(repo_base "$r") ($mode, $(ahead_of_base "$BATCH_DIR/$batch/$r" "$(repo_base "$r")") commits)"
+  done
+  if [[ $yes -eq 0 ]]; then echo "(plan only; pass --yes to run: sync, t1, e2e, push)"; return 0; fi
+
+  # 1) sync with base (merge, since int/* is local-only)
+  for r in "${repos[@]}"; do
+    wt="$BATCH_DIR/$batch/$r"; base="$(repo_base "$r")"
+    if ! git -C "$wt" merge-base --is-ancestor "origin/$base" HEAD 2>/dev/null; then
+      echo "  $r: base moved, merging origin/$base"
+      git -C "$wt" merge --no-edit "origin/$base" >/dev/null 2>&1 || {
+        git -C "$wt" merge --abort 2>/dev/null || true
+        log_event ship conflict "$r" "$batch" "merging origin/$base"
+        die "$r: conflict merging origin/$base into int/$batch; resolve it in $wt and run ship again"; }
+    fi
+  done
+  # 2) tests
+  cmd_test t1 "$batch" || { log_event ship fail "" "$batch" "t1 failed"; die "t1 failed; nothing was pushed"; }
+  if [[ $skip_e2e -eq 0 ]]; then
+    [[ -n "$(cfg '.e2e.command // empty')" ]] || die "no [e2e] command configured; pass --skip-e2e to ship without e2e"
+    run_e2e "$batch" || { log_event ship fail "" "$batch" "t2 failed"; die "e2e failed; nothing was pushed"; }
+  fi
+  # 3) push
+  for r in "${repos[@]}"; do
+    wt="$BATCH_DIR/$batch/$r"; base="$(repo_base "$r")"; mode="$(cfg --arg r "$r" '.repos[$r].push // "direct"')"
+    if [[ "$mode" == "pr" ]]; then
+      git -C "$wt" push origin "int/$batch" && (cd "$wt" && gh pr create --base "$base" --head "int/$batch" --fill) \
+        || die "$r: could not open the PR"
+    else
+      git -C "$wt" push origin "int/$batch:$base" || die "$r: push to $base rejected (base moved again? run ship again)"
+    fi
+    log_event ship ok "$r" "$batch" "int/$batch -> $base ($mode)"; echo "  pushed $r"
+  done
+  echo "Shipped. Cleanup: ms-workspace clean $batch"
+}
+
+# ---------- clean ----------
+cmd_clean() {
+  need_ws
+  local force=0 batch="" arg r wt b all_merged
+  for arg in "$@"; do case "$arg" in --force) force=1 ;; *) batch="$arg" ;; esac; done
+  if [[ -z "$batch" ]]; then
+    [[ -d "$BATCH_DIR" ]] || { echo "(no batches)"; return 0; }
+    for b in "$BATCH_DIR"/*/; do
+      [[ -d "$b" ]] || continue
+      b="$(basename "$b")"; all_merged=yes
+      while read -r r; do
+        git -C "$BATCH_DIR/$b/$r" merge-base --is-ancestor HEAD "$(base_ref "$BATCH_DIR/$b/$r" "$(repo_base "$r")")" 2>/dev/null || all_merged=no
+      done < <(batch_repos "$b")
+      echo "$b: $([[ $all_merged == yes ]] && echo 'merged (safe to clean)' || echo 'pending')"
+    done
+    return 0
+  fi
+  batch="$(need_batch "$batch")"
+  if [[ $force -eq 0 ]]; then
+    while read -r r; do
+      wt="$BATCH_DIR/$batch/$r"
+      git -C "$wt" merge-base --is-ancestor HEAD "$(base_ref "$wt" "$(repo_base "$r")")" 2>/dev/null \
+        || die "$r: int/$batch is not merged into $(repo_base "$r") yet (use --force to discard)"
+    done < <(batch_repos "$batch")
+  fi
+  local f=(); [[ $force -eq 1 ]] && f=(--force)
+  while read -r r; do
+    for wt in "$BATCH_DIR/$batch"/.agents/*/"$r"; do
+      [[ -d "$wt" ]] && git -C "$BATCH_DIR/$batch/$r" worktree remove "${f[@]}" "$wt"
+    done
+    git -C "$BATCH_DIR/$batch/$r" worktree remove "${f[@]}" "$BATCH_DIR/$batch/$r"
+    for b in $(git -C "$WS_ROOT/$r" for-each-ref --format='%(refname:short)' "refs/heads/agent/$batch/" "refs/heads/int/$batch"); do
+      git -C "$WS_ROOT/$r" branch -D "$b" >/dev/null
+    done
+    log_event clean ok "$r" "$batch" ""
+    echo "  cleaned $r"
+  done < <(batch_repos "$batch")
+  # Only empty directories and the TASKS.md note remain; ${VAR:?} aborts if a variable is empty.
+  rm -f "${BATCH_DIR:?}/${batch:?}/TASKS.md"
+  find "${BATCH_DIR:?}/${batch:?}" -depth -type d -empty -delete 2>/dev/null || true
 }
 
 # ---------- guard (PreToolUse hook) ----------
@@ -183,9 +398,9 @@ cmd_guard() {
   [[ -n "$cwd" && -d "$cwd" ]] && cd "$cwd"
   load_ws || exit 0
   case "$PWD/" in "$BATCH_DIR"/*) ;; *) exit 0 ;; esac
-  if grep -Eq '\bgit\b([[:space:]]+(-C|-c)[[:space:]]+[^[:space:]]+|[[:space:]]+--[^[:space:]]+)*[[:space:]]+push\b|\bgh[[:space:]]+pr[[:space:]]+(create|merge)\b' <<<"$command"; then
+  if grep -Eq '\bgit\b([[:space:]]+(-C|-c)[[:space:]]+[^[:space:]]+|[[:space:]]+--[^[:space:]]+)*[[:space:]]+push\b|\bgh[[:space:]]+pr[[:space:]]+(create|merge)\b|\bms-workspace[[:space:]]+(ship|clean)\b' <<<"$command"; then
     log_event guard blocked "" "" "$command"
-    echo "Blocked: agents in a batch worktree must not push or open/merge PRs. Commit locally; the human integrates with 'ms-workspace ship'." >&2
+    echo "Blocked: agents in a batch worktree must not push, open/merge PRs, or run 'ms-workspace ship|clean'. Commit locally; the human integrates with 'ms-workspace ship'." >&2
     exit 2
   fi
   exit 0
@@ -290,7 +505,10 @@ case "${1:-}" in
   affected)  shift; cmd_affected "$@" ;;
   test)      shift; cmd_test "$@" ;;
   log)       shift; cmd_log "$@" ;;
-  integrate|ship|clean) die "'$1' is not implemented yet" ;;
+  agent)     shift; cmd_agent "$@" ;;
+  integrate) shift; cmd_integrate "$@" ;;
+  ship)      shift; cmd_ship "$@" ;;
+  clean)     shift; cmd_clean "$@" ;;
   ""|-h|--help) sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1" ;;
 esac

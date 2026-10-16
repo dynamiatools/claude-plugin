@@ -11,6 +11,8 @@ base = "next"                # branch where changes are integrated
 release = []                 # branches that go to qa/production
 stacks = ["maven", "pnpm"]
 deps = []                    # repos this one depends on
+critical = []                # modules always tested in t1/t2 (money, security, ...)
+push = "direct"              # "direct" (push int/<batch> to base) or "pr" (open a PR)
 [repos.core-lib.test]
 unit = "mvn -T1C -B test"
 affected = "mvn -T1C -B test -pl {modules} -amd"   # {modules} = changed Maven modules

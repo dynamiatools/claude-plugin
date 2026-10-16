@@ -31,7 +31,19 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 
 | Tool | What it does |
 |---|---|
-| `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. Implemented so far: `batch new`, `affected`, `test t0`, `log`, `context`, `status`, `doctor`, `guard` |
+| `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. See the flow below |
+
+**Batch flow** (all local until `ship`):
+
+1. `ms-workspace batch new <batch> [repos]`: one worktree per repo on `int/<batch>`, branched from the base branch.
+2. `ms-workspace agent new <batch> <task> [repos]`: an isolated worktree per agent (`agent/<batch>/<task>`), so parallel agents never touch the same files. Optional: a single agent can work directly in the `int/<batch>` worktree.
+3. `ms-workspace test t0`: tests only what changed in the current repo.
+4. `ms-workspace integrate <batch> [--dry-run]`: merges the agent branches into `int/<batch>` in dependency order, reporting conflicting files. `--dry-run` checks each branch against the current `int/<batch>` only, not against each other.
+5. `ms-workspace test t1 <batch>`: affected modules plus the repo's `critical` modules, for every changed repo.
+6. `ms-workspace ship <batch>`: prints the plan. With `--yes` it merges the moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`). It refuses release branches and never force-pushes.
+7. `ms-workspace clean [<batch>]`: lists batches, or removes a merged one (worktrees and local branches).
+
+Also: `log`, `affected`, `context`, `status [--fetch]`, `doctor` and `guard` (see Hooks).
 
 `ms-workspace` keeps an action log in `<workspace>/.ms-workspace/logs/YYYY-MM-DD.jsonl` (one JSON line per action, one file per day, old files pruned after `log_retention_days`, default 14). Read it with `ms-workspace log [-n N] [--day D] [--action A]`.
 
@@ -39,7 +51,7 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 
 `install.sh` never edits your `settings.json`. To enable the hooks, merge `settings/hooks.example.json` into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 
-- `ms-workspace guard` (PreToolUse on Bash) blocks `git push` and `gh pr create|merge` **only inside batch worktrees**, so agents commit locally and a human integrates. Blocked attempts are logged.
+- `ms-workspace guard` (PreToolUse on Bash) blocks `git push`, `gh pr create|merge` and `ms-workspace ship|clean` **only inside batch worktrees**, so agents commit locally and a human integrates. Blocked attempts are logged.
 - `ms-workspace context` (SessionStart) injects a ~15-line briefing (active batches, open tasks, last actions) so the agent does not have to explore. It prints nothing outside a workspace.
 - The `permissions.allow` entry avoids a prompt on every `ms-workspace` call.
 
@@ -83,6 +95,7 @@ Start a new Claude Code session afterwards so the skills are picked up.
 - [ ] Sanitized `settings.json` template
 - [x] `install.sh` to link everything idempotently
 - [ ] Document required external tools (e.g. `tmux`, `rtk`)
-- [x] `ms-workspace`: batch new, affected, test t0, log, context, status, doctor, guard
-- [ ] `ms-workspace`: integrate, ship, clean, test t1/t2, env, critical modules, per-repo task mode
+- [x] `ms-workspace`: batch new, agent new, affected, test t0/t1/t2, integrate, ship, clean, log, context, status, doctor, guard
+- [ ] `ms-workspace`: env (copy ignored files into worktrees), per-repo task mode, test-result memo by tree hash
+- [ ] Skills that wrap `ms-workspace` (`ms-batch`, `ms-integrate`, `ms-ship`)
 - [ ] Haiku-based agents (`ms-scout`, `ms-test-triage`) and a `[tools]` policy in `workspace.toml`
