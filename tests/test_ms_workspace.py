@@ -1304,6 +1304,14 @@ class TestPackaging(unittest.TestCase):
         self.assertTrue({"Bash(ms-workspace ship:*)", "Bash(ms-workspace clean:*)", "Bash(ms-workspace undo:*)"} <= set(data["permissions"]["ask"]))
         self.assertEqual(data["statusLine"]["command"], "ms-statusline")
 
+    def test_example_request_collection_is_valid(self):
+        import tomllib
+        ref = REPO / "skills" / "ms-workspace-init" / "references" / "requests"
+        data = tomllib.loads((ref / "smoke.http.toml").read_text())
+        self.assertEqual([r["name"] for r in data["request"]], ["health", "login", "me"])
+        self.assertIn("base_url", tomllib.loads((ref / "env" / "local.toml").read_text()))
+        self.assertIn("password=", (ref / "env" / "local.secrets.example").read_text())
+
     def test_example_workspace_config_parses(self):
         import tomllib
         cfg = tomllib.loads((REPO / "skills" / "ms-workspace-init" / "references" / "workspace.example.toml").read_text())
@@ -1861,6 +1869,380 @@ class TestUndo(Base):
 
     def test_needs_a_batch_name(self):
         self.assertNotEqual(self.ws.ms("undo").returncode, 0)
+
+
+# --------------------------------------------------------------------- http
+import http.server
+import threading
+
+
+class FakeApi:
+    """A tiny HTTP API on a random local port that records every request it receives."""
+
+    def __init__(self):
+        self.state = {"version": 1, "health_status": 200, "delay": 0.0}
+        self.received = []
+        api = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, status, body, ctype="application/json", headers=None):
+                data = body if isinstance(body, bytes) else (json.dumps(body) if not isinstance(body, str) else body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", ctype)
+                for k, v in (headers or {}).items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass   # the client gave up (timeout test)
+
+            def _handle(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                raw = self.rfile.read(length).decode() if length else ""
+                api.received.append({"method": self.command, "path": self.path, "headers": dict(self.headers), "body": raw})
+                path = self.path.split("?")[0]
+                if path == "/health":
+                    return self._send(api.state["health_status"], {"status": "UP" if api.state["health_status"] == 200 else "DOWN", "version": api.state["version"]})
+                if path == "/login" and self.command == "POST":
+                    data = json.loads(raw or "{}")
+                    if data.get("password") == "s3cret":
+                        return self._send(200, {"access_token": "tok123", "user": {"name": data.get("user")}})
+                    return self._send(401, {"error": "bad credentials"})
+                if path == "/me":
+                    if self.headers.get("Authorization") == "Bearer tok123":
+                        return self._send(200, {"user": {"name": "mario"}, "items": [{"id": 1}, {"id": 2}]})
+                    return self._send(401, {"error": "no token"})
+                if path == "/slow":
+                    time.sleep(api.state["delay"])
+                    return self._send(200, "ok", "text/plain")
+                if path == "/fail":
+                    return self._send(500, "boom", "text/plain")
+                if path == "/text":
+                    return self._send(200, "hello world", "text/plain")
+                if path == "/redirect":
+                    return self._send(302, "", "text/plain", {"Location": "/health"})
+                return self._send(404, {"error": "not found"})
+
+            do_GET = do_POST = do_PUT = do_DELETE = _handle
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        self.url = f"http://127.0.0.1:{self.port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+SMOKE = """
+[defaults]
+headers = { Accept = "application/json" }
+
+[[request]]
+name = "health"
+path = "/health"
+tags = ["smoke"]
+expect = { status = 200, json = { status = "UP" }, max_ms = 5000 }
+
+[[request]]
+name = "login"
+method = "POST"
+path = "/login"
+json = { user = "{{user}}", password = "{{secret:password}}" }
+capture = { token = "json:access_token" }
+expect = { status = 200, json_exists = ["access_token"] }
+
+[[request]]
+name = "me"
+path = "/me"
+headers = { Authorization = "Bearer {{token}}" }
+expect = { status = 200, json = { "user.name" = "mario", "items.1.id" = 2 }, headers = { content-type = "json" } }
+"""
+
+
+class HttpBase(Base):
+    @classmethod
+    def setUpClass(cls):
+        cls.api = FakeApi()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.api.close()
+
+    def setUp(self):
+        super().setUp()
+        self.api.received.clear()
+        self.api.state.update({"version": 1, "health_status": 200, "delay": 0.0})
+        self.req = self.ws.root / "requests"
+        (self.req / "env").mkdir(parents=True)
+        (self.req / "env" / "local.toml").write_text(f'base_url = "{self.api.url}"\nuser = "mario"\n')
+        (self.req / "env" / "local.secrets").write_text("password=s3cret\n")
+        (self.req / "smoke.http.toml").write_text(SMOKE)
+
+    def http(self, *args, **kw):
+        return self.ws.ms("http", *args, **kw)
+
+    def log_text(self):
+        return "\n".join(p.read_text() for p in (self.ws.root / ".ms-workspace" / "http").glob("*.jsonl"))
+
+    def requests_log(self):
+        return [json.loads(l) for l in self.log_text().splitlines() if '"kind":"request"' in l]
+
+
+class TestHttpRun(HttpBase):
+    def test_runs_a_collection_captures_a_token_and_logs_every_exchange(self):
+        r = self.http("run", "smoke")
+        self.assertOk(r)
+        for name in ("health", "login", "me"):
+            self.assertRegex(r.stdout, rf"PASS {name}\s")
+        self.assertIn("Summary: 3 passed, 0 failed, 0 skipped", r.stdout)
+        me = next(x for x in self.api.received if x["path"] == "/me")
+        self.assertEqual(me["headers"].get("Authorization"), "Bearer tok123", "the captured token was sent")
+        rows = self.requests_log()
+        self.assertEqual([x["name"] for x in rows], ["health", "login", "me"])
+        self.assertTrue(all(x["ok"] and x["status"] == 200 and x["ms"] >= 0 for x in rows))
+        self.assertIn("http.run", self.ws.log_lines("--action", "http.run"))
+
+    def test_secrets_and_tokens_never_reach_the_log_or_the_output(self):
+        r = self.http("run", "smoke")
+        everything = r.stdout + r.stderr + self.log_text()
+        self.assertNotIn("s3cret", everything)
+        self.assertNotIn("tok123", everything)
+        login = next(x for x in self.requests_log() if x["name"] == "login")
+        self.assertIn('"password":"***"', login["req_body"])
+        self.assertIn('"access_token":"***"', login["resp_body"])
+        me = next(x for x in self.requests_log() if x["name"] == "me")
+        self.assertEqual(me["req_headers"]["Authorization"], "***")
+        self.assertIn('"name":"mario"', login["resp_body"].replace(" ", ""), "ordinary data is kept")
+
+    def test_failures_are_explained_and_dependents_are_skipped(self):
+        (self.req / "env" / "local.secrets").write_text("password=wrong\n")
+        r = self.http("run", "smoke")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("FAIL login", r.stdout)
+        self.assertIn("status: expected 200, got 401", r.stdout)
+        self.assertIn("json_exists access_token: missing", r.stdout)
+        self.assertIn("SKIP me", r.stdout)
+        self.assertIn("variable {{token}} has no value", r.stdout)
+        self.assertIn("1 passed, 1 failed, 1 skipped", r.stdout)
+        self.assertNotIn("wrong", r.stdout + self.log_text())
+
+    def test_every_assertion_kind(self):
+        (self.req / "checks.http.toml").write_text("""
+[[request]]
+name = "bad-json"
+path = "/health"
+expect = { status = 200, json = { status = "DOWN", "nope.deep" = 1 }, json_exists = ["version", "missing"], body_contains = ["UP", "absent-text"], body_not_contains = ["UP"], headers = { x-missing = "y" } }
+
+[[request]]
+name = "status-list"
+path = "/fail"
+expect = { status = [200, 201] }
+
+[[request]]
+name = "too-slow"
+path = "/slow"
+expect = { max_ms = 1 }
+
+[[request]]
+name = "default-status-rule"
+path = "/fail"
+
+[[request]]
+name = "redirect-not-followed"
+path = "/redirect"
+expect = { status = 302 }
+""")
+        self.api.state["delay"] = 0.05
+        out = self.http("run", "checks").stdout
+        for want in ('json status: expected \'DOWN\', got \'UP\'', "json nope.deep: missing", "json_exists missing: missing",
+                     "body_contains 'absent-text': not found", "body_not_contains 'UP': found", "header x-missing: expected 'y', got None",
+                     "status: expected 200 or 201, got 500", "time: ", "status: got 500 (no expected status set"):
+            self.assertIn(want, out)
+        self.assertIn("PASS redirect-not-followed", out, "redirects are not followed unless asked to")
+        self.assertNotIn("json_exists version", out)
+
+    def test_filters_overrides_and_fail_fast(self):
+        self.assertIn("1 passed, 0 failed, 0 skipped", self.http("run", "smoke", "--only", "health").stdout)
+        self.assertIn("1 passed", self.http("run", "smoke", "--tag", "smoke").stdout)
+        self.api.received.clear()
+        self.http("run", "smoke", "--only", "login", "--var", "user=bob")
+        self.assertEqual(json.loads(self.api.received[0]["body"])["user"], "bob")
+        self.api.state["health_status"] = 503
+        out = self.http("run", "smoke", "--fail-fast").stdout
+        self.assertIn("FAIL health", out)
+        self.assertIn("SKIP login  (stopped by --fail-fast)", out)
+
+    def test_query_form_text_and_environment_variables(self):
+        (self.req / "misc.http.toml").write_text("""
+[[request]]
+name = "query"
+path = "/text"
+query = { page = 2, q = "a b" }
+headers = { X-Trace = "{{env:TRACE_ID}}" }
+expect = { status = 200, body_contains = ["hello"] }
+
+[[request]]
+name = "form"
+method = "POST"
+path = "/text"
+form = { a = "1", b = "x y" }
+expect = { status = 200 }
+""")
+        r = self.http("run", "misc", env={"TRACE_ID": "abc-9"})
+        self.assertOk(r)
+        q = next(x for x in self.api.received if x["method"] == "GET")
+        self.assertIn("page=2", q["path"])
+        self.assertIn("q=a+b", q["path"])
+        self.assertEqual(q["headers"].get("X-Trace"), "abc-9")
+        form = next(x for x in self.api.received if x["method"] == "POST")
+        self.assertEqual(form["body"], "a=1&b=x+y")
+        self.assertIn("application/x-www-form-urlencoded", form["headers"]["Content-Type"])
+        missing = self.http("run", "misc")   # TRACE_ID not set
+        self.assertEqual(missing.returncode, 1)
+        self.assertIn("variable {{env:TRACE_ID}} has no value", missing.stdout)
+
+    def test_connection_errors_and_timeouts_are_reported_not_raised(self):
+        (self.req / "env" / "dead.toml").write_text('base_url = "http://127.0.0.1:9"\n')
+        r = self.http("run", "smoke", "--env", "dead", "--only", "health")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no response", r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+        self.api.state["delay"] = 1.0
+        (self.req / "slow.http.toml").write_text('[[request]]\nname = "slow"\npath = "/slow"\n')
+        r = self.http("run", "slow", "--timeout", "0.2")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("no response", r.stdout)
+
+    def test_protected_environments_need_an_explicit_yes(self):
+        (self.req / "env" / "qa.toml").write_text(f'confirm = true\nbase_url = "{self.api.url}"\nuser = "mario"\n')
+        (self.req / "env" / "qa.secrets").write_text("password=s3cret\n")
+        r = self.http("run", "smoke", "--env", "qa")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--yes", r.stderr)
+        self.assertEqual(self.api.received, [], "nothing was sent")
+        self.assertOk(self.http("run", "smoke", "--env", "qa", "--yes"))
+        self.assertNotEqual(self.http("bench", "smoke", "--name", "health", "--env", "qa").returncode, 0)
+
+    def test_bad_input_gives_clear_errors(self):
+        (self.req / "broken.http.toml").write_text("not [valid toml")
+        (self.req / "empty.http.toml").write_text('name = "nothing"\n')
+        for args in (("run", "broken"), ("run", "empty"), ("run", "ghost"), ("run",), ("run", "smoke", "--env", "nope"), ("run", "smoke", "--bogus"), ("frobnicate",)):
+            r = self.http(*args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertNotIn("Traceback", r.stderr, args)
+
+    def test_json_output_and_runs_without_a_workspace(self):
+        data = json.loads(self.http("run", "smoke", "--json").stdout)
+        self.assertEqual((data["passed"], data["failed"]), (3, 0))
+        self.assertEqual([x["status"] for x in data["results"]], ["pass"] * 3)
+        file = self.req / "smoke.http.toml"
+        r = self.ws.ms("http", "run", str(file), "--var", f"base_url={self.api.url}", "--var", "user=mario", "--only", "health", cwd=self.ws.tmp)
+        self.assertOk(r)
+        self.assertTrue(list((self.ws.cache / "http").glob("*.jsonl")), "without a workspace the log goes to the cache directory")
+
+
+class TestHttpHistory(HttpBase):
+    def test_history_show_and_diff(self):
+        self.assertIn("(no runs yet)", self.http("history").stdout)
+        self.http("run", "smoke")
+        self.api.state.update({"version": 2, "health_status": 503})
+        self.http("run", "smoke", "--only", "health")
+        hist = self.http("history").stdout.strip().splitlines()
+        self.assertEqual(len(hist), 2)
+        self.assertIn("3 passed, 0 failed", hist[0])
+        self.assertIn("0 passed, 1 failed", hist[1])
+        shown = self.http("show", "last").stdout
+        self.assertIn("health: GET", shown)
+        self.assertIn("failed: status: expected 200, got 503", shown)
+        self.assertIn("response body:", shown)
+        diff = self.http("diff").stdout
+        self.assertIn("health: status 200 -> 503 | result pass -> fail", diff)
+        self.assertIn("version: 1 -> 2", diff)
+        self.assertIn("login: only in the older run", diff)
+
+    def test_diff_reports_no_changes_and_needs_an_earlier_run(self):
+        self.http("run", "smoke")
+        self.assertNotEqual(self.http("diff").returncode, 0)
+        self.http("run", "smoke")
+        self.assertIn("no differences", self.http("diff").stdout)
+        self.assertNotEqual(self.http("show", "zzz").returncode, 0)
+
+    def test_list_shows_files_requests_tags_and_environments(self):
+        out = self.http("list").stdout
+        self.assertIn("environments: local", out)
+        self.assertIn("smoke.http.toml: health [smoke], login, me", out)
+        empty = WS()
+        self.addCleanup(empty.close)
+        self.assertIn("no *.http.toml files", empty.ms("http", "list").stdout)
+
+
+class TestHttpBench(HttpBase):
+    def test_bench_stores_stats_and_flags_regressions(self):
+        (self.req / "slow.http.toml").write_text('[[request]]\nname = "slow"\npath = "/slow"\n')
+        self.api.state["delay"] = 0.01
+        first = self.http("bench", "slow", "--name", "slow", "-n", "8")
+        self.assertOk(first)
+        self.assertRegex(first.stdout, r"n=8 errors=0 min=[\d.]+ms avg=[\d.]+ms p50=[\d.]+ms p95=[\d.]+ms max=[\d.]+ms")
+        self.assertIn("first measurement stored", first.stdout)
+        self.api.state["delay"] = 0.25
+        second = self.http("bench", "slow", "--name", "slow", "-n", "8")
+        self.assertEqual(second.returncode, 1)
+        self.assertIn("REGRESSION", second.stdout)
+        self.api.state["delay"] = 0.25
+        again = self.http("bench", "slow", "--name", "slow", "-n", "8")
+        self.assertOk(again)
+        self.assertIn("vs previous", again.stdout)
+
+    def test_bench_input_errors(self):
+        self.assertNotEqual(self.http("bench", "smoke").returncode, 0)
+        self.assertNotEqual(self.http("bench", "smoke", "--name", "ghost").returncode, 0)
+        self.assertNotEqual(self.http("bench", "smoke", "--name", "health", "-n", "x").returncode, 0)
+        self.assertNotEqual(self.http("bench", "smoke", "--name", "me").returncode, 0, "needs {{token}}, which a bench does not capture")
+
+
+class TestHttpShip(HttpBase):
+    TOML = DEFAULT_TOML + '\n[http]\nsmoke = "smoke"\nsmoke_env = "local"\n'
+
+    def setUp(self):
+        super().setUp()
+        self.ws.set_toml(self.TOML)
+        d = self.ws.batch("b1", "lib")
+        self.ws.commit(d / "lib", "feature", {"f.txt": "1"})
+
+    def test_plan_mentions_the_smoke_checks(self):
+        self.assertIn("smoke checks: smoke (env local)", self.ws.ms("plan", "b1").stdout)
+
+    def test_a_passing_smoke_run_lets_the_push_happen(self):
+        r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e")
+        self.assertOk(r)
+        self.assertIn("PASS health", r.stdout)
+        self.assertEqual(self.ws.remote_log("lib")[0], "feature")
+
+    def test_a_failing_smoke_run_blocks_the_push_unless_skipped(self):
+        self.api.state["health_status"] = 503
+        r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("smoke checks failed", r.stderr)
+        self.assertNotIn("feature", self.ws.remote_log("lib"))
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e", "--skip-smoke"))
+        self.assertEqual(self.ws.remote_log("lib")[0], "feature")
+
+
+class TestHttpPermissions(unittest.TestCase):
+    def test_reading_is_allowed_but_sending_asks(self):
+        perms = json.loads((REPO / "settings" / "hooks.example.json").read_text())["permissions"]
+        for sub in ("list", "history", "show", "diff"):
+            self.assertIn(f"Bash(ms-workspace http {sub}:*)", perms["allow"])
+        for sub in ("run", "bench"):
+            self.assertIn(f"Bash(ms-workspace http {sub}:*)", perms["ask"])
+            self.assertNotIn(f"Bash(ms-workspace http {sub}:*)", perms["allow"])
 
 
 if __name__ == "__main__":

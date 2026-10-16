@@ -93,6 +93,27 @@ Names are validated, and a failed `batch new` or `agent new` rolls back what it 
 - **Pasted images.** Claude Code keeps chat images only as base64 inside the session transcript. `images capture` (Stop and SessionEnd hook) saves the new ones to `<workspace>/.ms-workspace/images/YYYY-MM-DD/HHMMSS_<session>_<n>.<ext>` with an `index.jsonl` (time, session, directory, the text sent with the image). Duplicates are skipped by hash, files older than `images_retention_days` (default 30) are pruned, `images [list]` shows recent ones and `images backfill` imports past sessions. They may contain sensitive data: they stay local, outside any repo.
 - **`status [--fetch]`** (one line per repo), **`doctor`** (tools, versions, workspace, hooks, usage snapshot, resources), **`affected`** (changed modules and dependent repos).
 
+## API checks
+
+`ms-workspace http` runs requests described in `requests/*.http.toml` (in the workspace root, or any file path) with assertions, and logs every exchange. Copy `skills/ms-workspace-init/references/requests/` as a starting point.
+
+```bash
+ms-workspace http run smoke --env local      # PASS/FAIL per request, exit 1 if anything failed
+ms-workspace http run smoke --only login --var user=bob --tag smoke --fail-fast --json
+ms-workspace http history                    # past runs
+ms-workspace http show last [request]        # the failing exchanges (masked bodies, headers, timing)
+ms-workspace http diff [runA] [runB]         # what changed vs the previous run: status, result, speed, JSON values
+ms-workspace http bench smoke --name health -n 20   # min/avg/p50/p95/max; flags a p95 regression against the last bench
+ms-workspace http list
+```
+
+- **Assertions** per request under `expect`: `status` (number or list), `max_ms`, `json` (dotted path to value, `items.0.id`), `json_exists`, `body_contains`, `body_not_contains`, `headers`. Without `status`, only 4xx and 5xx fail.
+- **Chaining**: `capture = { token = "json:access_token" }` (also `header:`, `regex:`, `status`) feeds `{{token}}` into later requests. A request whose variable has no value is skipped, not guessed.
+- **Variables**: `requests/env/<env>.toml` (committed, plain values), `--var k=v`, captured values, `{{env:NAME}}` from the process environment, `{{secret:NAME}}` from `requests/env/<env>.secrets` (dotenv, keep it out of git) or the environment.
+- **Secrets stay out of logs and output**: `{{secret:...}}` values, sensitive headers (`Authorization`, `Cookie`, `*token*`, `*password*`, `*api-key*`), such JSON keys in request and response bodies, and such query parameters are replaced by `***`. The log is `<workspace>/.ms-workspace/http/YYYY-MM-DD.jsonl`; bodies are cut at 4 000 characters. Outside a workspace the log goes to `~/.cache/ms-workspace/http/`.
+- **Safety**: an environment file with `confirm = true` (qa, prod) refuses to run without `--yes` and refuses `bench`. Redirects are not followed unless a request sets `follow_redirects = true`; `insecure = true` accepts self-signed certificates. Permissions: `list`, `history`, `show`, `diff` are allowed; `run` and `bench` always ask, because they send traffic.
+- **Smoke checks before shipping**: `[http] smoke = "smoke"` and `smoke_env = "local"` in `workspace.toml` make `ship --yes` run that collection after t1 and before e2e; a failure blocks the push (`--skip-smoke` bypasses it deliberately). `plan` shows the line.
+
 ## The workspace
 
 A workspace is a folder with several repos plus a `workspace.toml` (see `skills/ms-workspace-init/references/workspace.example.toml` for every key). The folder that holds the file is the workspace root; batches live in `.batches/` and state in `.ms-workspace/`, both outside every repo.
@@ -136,6 +157,8 @@ python3 -m unittest tests.test_ms_workspace.TestShip -v
 
 ## Roadmap
 
+- [x] API checks (`ms-workspace http`) with assertions, masked logs, diff and bench
+- [ ] A local mock server for third-party APIs (payments, tax authority) that records what it receives
 - [ ] First end-to-end run on real repos (Maven, pnpm, Gradle) and a live check of the image hook
 - [ ] Exact integration plan across agents (merge-tree chain) instead of per-branch `--dry-run`
 - [ ] Secret and large-file gate before `ship`

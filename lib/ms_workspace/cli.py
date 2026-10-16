@@ -36,6 +36,8 @@ Usage:
   ms-workspace setup-hooks [--dry-run] [--remove] [--project]   merge the ms-* hooks and status line into settings.json
   ms-workspace budget [--top N] [--json]     what every session loads before you type (CLAUDE.md, skills, agents, memory), in tokens
   ms-workspace readguard / outguard          token-saving hooks: warn on re-reading an unchanged file; shorten huge Bash output
+  ms-workspace http run <file> [--env E] ...  API checks from requests/*.http.toml: assertions, captured variables, a log of every exchange
+  ms-workspace http list|history|show|diff|bench   see the files, past runs, one exchange, what changed between runs, latency percentiles
   ms-workspace doctor                        check tools, versions, resources and workspace.toml
   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 
@@ -84,6 +86,9 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd == "outguard":
         from .hooks import cmd_outguard
         return cmd_outguard()
+    if cmd == "http":
+        from .apitest import cmd_http
+        return cmd_http(Workspace.load(required=False), args)
     if cmd == "budget":
         from .budget import cmd_budget
         return cmd_budget(Workspace.load(required=False), args)

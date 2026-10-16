@@ -1,0 +1,4 @@
+# requests/env/local.toml - plain values, safe to commit. Add `confirm = true` to protected environments (qa, prod):
+# runs against them then need --yes. `insecure = true` accepts self-signed certificates.
+base_url = "http://localhost:8080"
+user = "demo"

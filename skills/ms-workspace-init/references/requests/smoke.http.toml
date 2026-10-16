@@ -1,0 +1,28 @@
+# requests/smoke.http.toml - run with:  ms-workspace http run smoke --env local
+# Every request can be tagged and filtered (--tag smoke, --only health). Variables come from requests/env/<env>.toml,
+# --var k=v, values captured from earlier responses, {{env:NAME}} (process environment) and {{secret:NAME}}
+# (requests/env/<env>.secrets or the process environment; always masked in output and logs).
+
+[defaults]
+headers = { Accept = "application/json" }
+timeout = 10
+
+[[request]]
+name = "health"
+path = "/actuator/health"
+tags = ["smoke"]
+expect = { status = 200, json = { status = "UP" }, max_ms = 1500 }
+
+[[request]]
+name = "login"
+method = "POST"
+path = "/api/v2/login"
+json = { user = "{{user}}", password = "{{secret:password}}" }
+capture = { token = "json:access_token" }        # also: header:<name>, regex:<pattern with one group>, status
+expect = { status = 200, json_exists = ["access_token"] }
+
+[[request]]
+name = "me"
+path = "/api/v2/me"
+headers = { Authorization = "Bearer {{token}}" }
+expect = { status = 200, json = { "user.name" = "{{user}}" }, headers = { content-type = "json" }, body_not_contains = ["error"] }

@@ -265,12 +265,14 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
     if not args:
         die("usage: ship <batch> [--yes] [--skip-e2e]")
     batch = need_batch(ws, args[0])
-    yes = skip_e2e = False
+    yes = skip_e2e = skip_smoke = False
     for a in args[1:]:
         if a == "--yes":
             yes = True
         elif a == "--skip-e2e":
             skip_e2e = True
+        elif a == "--skip-smoke":
+            skip_smoke = True
         else:
             die(f"ship: unknown option {a}")
 
@@ -311,8 +313,11 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
         stat = git_out(wt, "diff", "--shortstat", f"{ref}...HEAD")
         if stat:
             print(f"      {stat}")
+    smoke = ws.get("http", "smoke")
+    if smoke:
+        print(f"  smoke checks: {smoke} (env {ws.get('http', 'smoke_env', default='local')}) before the push" + ("  [skipped by --skip-smoke]" if skip_smoke else ""))
     if not yes:
-        print("(plan only; pass --yes to run: sync, t1, e2e, push)")
+        print("(plan only; pass --yes to run: sync, t1, smoke checks, e2e, push)")
         return 0
 
     # 1) sync with the base branch (merge, since int/* is local only)
@@ -328,6 +333,12 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
     if test_t1(ws, batch) != 0:
         ws.log("ship", "fail", "", batch, "t1 failed")
         die("t1 failed; nothing was pushed")
+    if smoke and not skip_smoke:
+        from .apitest import run_file
+        print("  smoke checks:")
+        if run_file(ws, smoke, ws.get("http", "smoke_env", default="local"), assume_yes=True) != 0:
+            ws.log("ship", "fail", "", batch, "smoke checks failed")
+            die("smoke checks failed; nothing was pushed (fix them, or pass --skip-smoke)")
     if not skip_e2e:
         if not ws.get("e2e", "command"):
             die("no [e2e] command configured; pass --skip-e2e to ship without e2e")

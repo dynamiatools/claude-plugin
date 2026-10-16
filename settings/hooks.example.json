@@ -101,14 +101,20 @@
       "Bash(ms-workspace integrate:*)",
       "Bash(ms-workspace batch new:*)",
       "Bash(ms-workspace agent new:*)",
-      "Bash(ms-workspace budget:*)"
+      "Bash(ms-workspace budget:*)",
+      "Bash(ms-workspace http list:*)",
+      "Bash(ms-workspace http history:*)",
+      "Bash(ms-workspace http show:*)",
+      "Bash(ms-workspace http diff:*)"
     ],
     "ask": [
       "Bash(ms-workspace ship:*)",
       "Bash(ms-workspace clean:*)",
       "Bash(ms-workspace env:*)",
       "Bash(ms-workspace setup-hooks:*)",
-      "Bash(ms-workspace undo:*)"
+      "Bash(ms-workspace undo:*)",
+      "Bash(ms-workspace http run:*)",
+      "Bash(ms-workspace http bench:*)"
     ]
   }
 }

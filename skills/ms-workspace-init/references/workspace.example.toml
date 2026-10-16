@@ -13,6 +13,12 @@ stale_minutes = 15           # note when the usage snapshot is older than this
 [context]                   # token-saving hooks (see README: outguard)
 bash_output_max_chars = 30000   # longer Bash output is cut to its first and last lines; the full text is saved to a file
 
+[http]                      # API checks (ms-workspace http); requests live in <workspace>/requests/*.http.toml
+dir = "requests"
+env = "local"                # default environment: requests/env/<name>.toml
+smoke = "smoke"              # optional: run requests/smoke.http.toml before every ship push
+smoke_env = "local"
+
 [tools]                      # rendered into the workspace CLAUDE.md "Tool preference" section
 discovery = ["idea", "codebase-memory", "grep"]   # ordered; "mcp:<server>" adds any MCP server
 shell = "rtk"                # "rtk" adds the rtk note, anything else omits it
