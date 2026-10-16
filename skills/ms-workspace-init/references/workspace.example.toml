@@ -19,6 +19,25 @@ env = "local"                # default environment: requests/env/<name>.toml
 smoke = "smoke"              # optional: run requests/smoke.http.toml before every ship push
 smoke_env = "local"
 
+[gate]                       # pre-publish scan (ms-workspace gate; ship runs it and stops on secrets, merge markers, huge files)
+max_file_kb = 1024
+# ignore_paths = ["**/fixtures/**"]
+# allow = ["INTERNAL_FIXTURE"]          # regexes: a line matching one is never reported
+
+[notify]                     # optional; nothing is sent unless you configure a destination
+# kind = "ntfy"              # "ntfy", "webhook" or "command"
+# url = "https://ntfy.example.com/a-private-hard-to-guess-topic"
+# on = ["ship"]              # also announce when `ship --yes` finishes or fails
+
+[recall]
+days = 90                    # how far back sessions are indexed for `ms-workspace recall`
+
+[[arch.rule]]                # architecture rules checked by `ms-workspace modules check` (Maven reactors)
+name = "depend on api, never on another module's core"
+from = ["sources/modulos/*/core"]
+forbid = ["sources/modulos/*/core"]
+allow_same_group = true      # a dependency between siblings of the same parent folder is fine
+
 [tools]                      # rendered into the workspace CLAUDE.md "Tool preference" section
 discovery = ["idea", "codebase-memory", "grep"]   # ordered; "mcp:<server>" adds any MCP server
 shell = "rtk"                # "rtk" adds the rtk note, anything else omits it

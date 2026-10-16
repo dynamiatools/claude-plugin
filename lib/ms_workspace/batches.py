@@ -210,7 +210,11 @@ def cmd_affected(ws: Workspace, args: list[str]) -> int:
             if r != repo and r not in dependents and any(d == repo or d in dependents for d in ws.deps(r)):
                 dependents.add(r)
                 grew = True
-    out = {"repo": repo, "files": len(files), "modules": modules_of(top, files), "dependents": sorted(dependents)}
+    mods = modules_of(top, files)
+    out = {"repo": repo, "files": len(files), "modules": mods, "dependents": sorted(dependents)}
+    if (top / "pom.xml").is_file():
+        from .modules import closure, load_reactor
+        out["closure"] = closure(load_reactor(top), set(mods))   # changed modules plus every module that depends on them
     print(json.dumps(out, separators=(",", ":")))
     return 0
 
@@ -260,12 +264,27 @@ def cmd_integrate(ws: Workspace, args: list[str]) -> int:
 
 # ------------------------------------------------------------------------ ship
 def cmd_ship(ws: Workspace, args: list[str]) -> int:
+    """ship, plus an optional notification ([notify] on = ["ship"]) when a real run finishes or fails."""
+    from .notify import notify_event
+    real = "--yes" in args and bool(args)
+    try:
+        code = _ship(ws, args)
+    except MsError as e:
+        if real:
+            notify_event(ws, "ship", "Ship failed", f"batch {args[0]}: {e}", "high")
+        raise
+    if real and getattr(ws, "_shipped", None):
+        notify_event(ws, "ship", "Shipped", f"batch {args[0]} pushed: {', '.join(ws._shipped)}")
+    return code
+
+
+def _ship(ws: Workspace, args: list[str]) -> int:
     from .runner import run_e2e, test_t1
 
     if not args:
         die("usage: ship <batch> [--yes] [--skip-e2e]")
     batch = need_batch(ws, args[0])
-    yes = skip_e2e = skip_smoke = False
+    yes = skip_e2e = skip_smoke = skip_gate = False
     for a in args[1:]:
         if a == "--yes":
             yes = True
@@ -273,6 +292,8 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
             skip_e2e = True
         elif a == "--skip-smoke":
             skip_smoke = True
+        elif a == "--skip-gate":
+            skip_gate = True
         else:
             die(f"ship: unknown option {a}")
 
@@ -313,6 +334,10 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
         stat = git_out(wt, "diff", "--shortstat", f"{ref}...HEAD")
         if stat:
             print(f"      {stat}")
+    from .gate import gate_batch, report
+    gate_lines, gate_blocks, gate_warns = report(gate_batch(ws, batch))
+    print("  gate: " + ("clean" if not gate_blocks and not gate_warns else f"{gate_blocks} blocking, {gate_warns} warning(s)") + ("  [skipped by --skip-gate]" if skip_gate else ""))
+    print("\n".join(gate_lines))
     smoke = ws.get("http", "smoke")
     if smoke:
         print(f"  smoke checks: {smoke} (env {ws.get('http', 'smoke_env', default='local')}) before the push" + ("  [skipped by --skip-smoke]" if skip_smoke else ""))
@@ -329,7 +354,10 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
                 git(wt, "merge", "--abort")
                 ws.log("ship", "conflict", r, batch, f"merging origin/{base}")
                 die(f"{r}: conflict merging origin/{base} into int/{batch}; resolve it in {wt} and run ship again")
-    # 2) tests
+    # 2) gate and tests
+    if gate_blocks and not skip_gate:
+        ws.log("ship", "fail", "", batch, f"gate: {gate_blocks} blocking finding(s)")
+        die(f"the gate found {gate_blocks} blocking problem(s) in what would be sent (listed above); nothing was pushed. Fix them or pass --skip-gate")
     if test_t1(ws, batch) != 0:
         ws.log("ship", "fail", "", batch, "t1 failed")
         die("t1 failed; nothing was pushed")
@@ -377,6 +405,7 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
         ws.log("ship", "ok", r, batch, f"int/{batch} -> {base} ({mode})",
                before=record["repos"][r]["before"][:12], after=record["repos"][r]["after"][:12])
         print(f"  pushed {r}")
+    ws._shipped = list(repos)
     print(f"Shipped. Cleanup: ms-workspace clean {batch}. To revert: ms-workspace undo {batch}")
     return 0
 

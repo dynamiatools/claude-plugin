@@ -1304,7 +1304,7 @@ class TestPackaging(unittest.TestCase):
         data = json.loads((REPO / "settings" / "hooks.example.json").read_text())
         cmds = {h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]}
         self.assertEqual(cmds, {"ms-workspace guard", "ms-workspace context", "ms-workspace images capture", "ms-workspace readguard",
-                                "ms-workspace outguard", "ms-workspace readguard --reset"})
+                                "ms-workspace outguard", "ms-workspace readguard --reset", "ms-workspace handoff --hook", "ms-workspace notify --hook"})
         self.assertNotIn("Bash(ms-workspace:*)", data["permissions"]["allow"])
         self.assertTrue({"Bash(ms-workspace ship:*)", "Bash(ms-workspace clean:*)", "Bash(ms-workspace undo:*)"} <= set(data["permissions"]["ask"]))
         self.assertEqual(data["statusLine"]["command"], "ms-statusline")
@@ -2900,6 +2900,940 @@ class TestGuardForNewTools(Base):
         for rule in ("Bash(ms-workspace ps kill:*)", "Bash(ms-workspace docker clean:*)"):
             self.assertIn(rule, perms["ask"])
             self.assertNotIn(rule, perms["allow"])
+
+
+# ------------------------------------------------------------------------ gate
+def fake(*parts):
+    """Build secret-looking test values from pieces, so this file never contains one literally."""
+    return "".join(parts)
+
+
+class TestGate(Base):
+    def setUp(self):
+        super().setUp()
+        self.d = self.ws.batch("b1", "lib")
+        self.wt = self.d / "lib"
+
+    def add(self, files, msg="change"):
+        self.ws.commit(self.wt, msg, files)
+
+    def gate(self, *args):
+        return self.ws.ms("gate", "b1", *args)
+
+    def test_a_clean_change_passes(self):
+        self.add({"src/App.java": "class App { int x = 1; }\n", "README.md": "# docs\n"})
+        r = self.gate()
+        self.assertOk(r)
+        self.assertIn("gate: clean", r.stdout)
+
+    def test_known_secret_formats_block_and_are_masked(self):
+        secrets = {
+            "aws": fake("AKIA", "ABCDEFGHIJKLMNOP"),
+            "github": fake("ghp_", "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8"),
+            "stripe": fake("sk_li", "ve_", "abcdefghijklmnopqrstuvwx"),
+            "jwt": fake("eyJhbGciOiJIUzI1NiJ9", ".", "eyJzdWIiOiIxMjM0NTY3ODkwIn0", ".", "abcdefghijklmnop"),
+            "google": fake("AIza", "SyA-abcdefghijklmnopqrstuvwxyz01234"),
+            "slack": fake("xox", "b-123456789012-abcdefghijkl"),
+        }
+        self.add({"cfg.txt": "\n".join(f"v{i} = {v}" for i, v in enumerate(secrets.values())) + "\n",
+                  "key.pem": fake("-----BEGIN ", "RSA PRIVATE KEY-----") + "\nMIIB...\n",
+                  "db.properties": "url=" + fake("postgres://", "admin:", "Sup3rS3cret", "@db.internal:5432/app") + "\n"})
+        r = self.gate()
+        self.assertEqual(r.returncode, 1)
+        for rule in ("aws-access-key", "github-token", "stripe-live-key", "jwt", "google-api-key", "slack-token", "private-key", "credentials-in-url"):
+            self.assertIn(rule, r.stdout)
+        for value in secrets.values():
+            self.assertNotIn(value, r.stdout, "evidence is masked")
+        self.assertIn("lib  cfg.txt:1", r.stdout)
+        self.assertIn("ms-gate: allow", r.stdout)
+
+    def test_hardcoded_assignments_but_not_placeholders(self):
+        self.add({"a.py": f'password = "{fake("Zx9!kQ7v", "Lm2pRt8")}"\n', "b.yml": 'api_key: "short"\n'})
+        r = self.gate()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("hardcoded-secret", r.stdout)
+        self.assertNotIn("b.yml", r.stdout)
+        self.add({"c.py": 'password = "changeme"\napi_key = "${API_KEY}"\ntoken = "<your-token-here>"\nsecret = "example-secret-value"\n'
+                          'DB_PASSWORD = "{{secret:db}}"\nauth_token = "test-token-1234567"\n'}, "placeholders")
+        out = self.gate().stdout
+        self.assertNotIn("c.py", out)
+
+    def test_only_added_lines_are_scanned_and_allow_markers_work(self):
+        old = fake("AKIA", "ABCDEFGHIJKLMNOP")
+        self.ws.commit(self.ws.root / "lib", "old secret on the base branch", {"legacy.txt": f"key = {old}\nother = 1\n"})
+        self.ws.git(self.ws.root / "lib", "push", "-q", "origin", "next")
+        d2 = self.ws.batch("b2", "lib")
+        self.ws.commit(d2 / "lib", "touch another line", {"legacy.txt": f"key = {old}\nother = 2\n", "ok.txt": f"x = {old}  # ms-gate: allow\n"})
+        self.assertOk(self.ws.ms("gate", "b2"))
+
+    def test_merge_markers_need_both_ends_and_lock_files_are_ignored(self):
+        self.add({"half.txt": "<<<<<<< HEAD\nmine\n", "line.txt": "=======\n"})
+        self.assertOk(self.gate())
+        self.add({"both.txt": "<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> branch\n"}, "markers")
+        r = self.gate()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("merge-conflict-marker", r.stdout)
+        self.add({"package-lock.json": '{"resolved": "' + fake("AKIA", "ABCDEFGHIJKLMNOP") + '"}\n'}, "lock")
+        self.assertNotIn("package-lock", self.gate().stdout)
+
+    def test_large_files_and_ignore_paths(self):
+        self.ws.set_toml(DEFAULT_TOML + "\n[gate]\nmax_file_kb = 1\n")
+        self.add({"big.bin.txt": "x" * 3000 + "\n"})
+        r = self.gate()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("large-file", r.stdout)
+        self.ws.set_toml(DEFAULT_TOML + '\n[gate]\nmax_file_kb = 1\nignore_paths = ["big.*"]\n')
+        self.assertOk(self.gate())
+
+    def test_debug_leftovers_warn_but_do_not_block(self):
+        self.add({"a.js": "console.log('x')\ndebugger;\n", "T.java": 'System.out.println("x");\ne.printStackTrace();\n', "t.test.js": "it.only('x', () => {})\n",
+                  "notes.md": "console.log(x)\n"})
+        r = self.gate()
+        self.assertOk(r)
+        self.assertIn("0 blocking", r.stdout)
+        for rule in ("console-log", "debugger", "system-out", "print-stack-trace", "focused-test"):
+            self.assertIn(rule, r.stdout)
+        self.assertNotIn("notes.md", r.stdout)
+
+    def test_debug_rules_follow_the_language_and_spare_test_files(self):
+        self.add({"fixture.py": "x = 'console.log(1); debugger;'\n", "Fixture.java": "// console.log(1)\n", "web/test/helper.js": "console.log('trace')\n",
+                  "web/test/a.spec.js": "it.only('x', () => {})\n", "tool.py": "import pdb\n"})
+        out = self.gate().stdout
+        self.assertNotIn("fixture.py", out)
+        self.assertNotIn("Fixture.java", out)
+        self.assertNotIn("helper.js", out, "console.log in test files is not worth a warning")
+        self.assertIn("a.spec.js", out)
+        self.assertIn("focused-test", out)
+        self.assertIn("tool.py:1  python-debugger", out)
+
+    def test_words_with_separators_are_not_secrets(self):
+        self.add({"r.toml": 'capture = { token = "json:access_token" }\n', "c.py": 'secret_name = "database.password.key"\ntoken = "header:x-csrf-token"\n'})
+        self.assertIn("gate: clean", self.gate().stdout)
+
+    def test_allow_patterns_from_the_config(self):
+        self.ws.set_toml(DEFAULT_TOML + '\n[gate]\nallow = ["INTERNAL_FIXTURE"]\n')
+        self.add({"f.txt": f"INTERNAL_FIXTURE {fake('AKIA', 'ABCDEFGHIJKLMNOP')}\n"})
+        self.assertOk(self.gate())
+
+    def test_untracked_files_count_and_json_output(self):
+        (self.wt / "new.txt").write_text(f"key = {fake('AKIA', 'ABCDEFGHIJKLMNOP')}\n")
+        data = json.loads(self.gate("--json").stdout)
+        self.assertEqual(data["blocking"], 1)
+        self.assertEqual(data["findings"]["lib"][0]["path"], "new.txt")
+        self.assertEqual(data["findings"]["lib"][0]["rule"], "aws-access-key")
+
+    def test_standalone_from_a_checkout_and_unknown_batch(self):
+        (self.ws.root / "lib" / "leak.txt").write_text(f"t = {fake('ghp_', 'a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8')}\n")
+        r = self.ws.ms("gate", cwd=self.ws.root / "lib")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("github-token", r.stdout)
+        self.assertNotEqual(self.ws.ms("gate", "ghost").returncode, 0)
+
+    def test_ship_is_blocked_by_the_gate_unless_skipped(self):
+        self.add({"cfg.txt": f"k = {fake('AKIA', 'ABCDEFGHIJKLMNOP')}\n"})
+        plan = self.ws.ms("plan", "b1")
+        self.assertIn("gate: 1 blocking", plan.stdout)
+        r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("the gate found 1 blocking", r.stderr)
+        self.assertNotIn("change", self.ws.remote_log("lib"))
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e", "--skip-gate"))
+        self.assertEqual(self.ws.remote_log("lib")[0], "change")
+
+    def test_ship_proceeds_on_warnings_only(self):
+        self.add({"a.js": "console.log(1)\n"})
+        plan = self.ws.ms("plan", "b1")
+        self.assertIn("gate: 0 blocking, 1 warning(s)", plan.stdout)
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e"))
+
+
+# ----------------------------------------------------------------------- junit
+SUREFIRE = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.acme.PayTest" tests="5" failures="2" errors="1" skipped="1" time="1.5">
+  <testcase classname="com.acme.PayTest" name="ok" time="0.1"/>
+  <testcase classname="com.acme.PayTest" name="refund" time="0.2">
+    <failure message="expected: &lt;100&gt; but was: &lt;90&gt;" type="org.opentest4j.AssertionFailedError">org.opentest4j.AssertionFailedError: expected: &lt;100&gt; but was: &lt;90&gt;
+	at org.junit.jupiter.api.AssertionUtils.fail(AssertionUtils.java:55)
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:545)
+	at com.acme.pay.Refund.apply(Refund.java:42)
+	at com.acme.PayTest.refund(PayTest.java:30)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+    </failure>
+  </testcase>
+  <testcase classname="com.acme.PayTest" name="partialRefund" time="0.2">
+    <failure message="expected: &lt;100&gt; but was: &lt;90&gt;" type="org.opentest4j.AssertionFailedError">x
+	at com.acme.pay.Refund.apply(Refund.java:42)</failure>
+  </testcase>
+  <testcase classname="com.acme.PayTest" name="boom" time="0.3">
+    <error message="Cannot invoke &quot;Account.balance()&quot; because &quot;acc&quot; is null" type="java.lang.NullPointerException">java.lang.NullPointerException
+	at com.acme.pay.Ledger.post(Ledger.java:77)
+	at com.acme.PayTest.boom(PayTest.java:55)</error>
+  </testcase>
+  <testcase classname="com.acme.PayTest" name="later" time="0"><skipped/></testcase>
+</testsuite>
+"""
+PYTEST_XML = """<testsuites><testsuite name="pytest" tests="2" failures="1"><testcase classname="tests.test_a" name="test_x" time="0.01">
+<failure message="assert 1 == 2">def test_x():
+&gt;       assert 1 == 2
+E       assert 1 == 2
+
+tests/test_a.py:4: AssertionError</failure></testcase><testcase classname="tests.test_a" name="test_y" time="0.01"/></testsuite></testsuites>"""
+
+
+class TestJunit(Base):
+    def setUp(self):
+        super().setUp()
+        self.reports = self.ws.tmp / "reports"
+        self.reports.mkdir()
+        (self.reports / "TEST-com.acme.PayTest.xml").write_text(SUREFIRE)
+
+    def junit(self, *args, cwd=None):
+        return self.ws.ms("junit", *args, cwd=cwd or self.ws.tmp)
+
+    def test_summary_groups_messages_and_skips_framework_frames(self):
+        r = self.junit(str(self.reports))
+        self.assertEqual(r.returncode, 1)
+        out = r.stdout
+        self.assertIn("5 tests: 2 failed, 1 errors, 1 skipped", out)
+        self.assertIn("FAILURE com.acme.PayTest.refund (+1 more with the same message)", out)
+        self.assertIn("expected: <100> but was: <90>", out)
+        self.assertIn("at com.acme.pay.Refund.apply(Refund.java:42)", out)
+        self.assertNotIn("org.junit.jupiter", out, "framework frames are skipped")
+        self.assertIn("ERROR com.acme.PayTest.boom", out)
+        self.assertIn("NullPointerException: Cannot invoke", out)
+        self.assertIn("Ledger.java:77", out)
+        self.assertLess(len(out.splitlines()), 12)
+
+    def test_pytest_reports_and_json_and_top(self):
+        (self.reports / "pytest.xml").write_text(PYTEST_XML)
+        data = json.loads(self.junit(str(self.reports / "pytest.xml"), "--json").stdout)
+        self.assertEqual((data["tests"], data["failed"]), (2, 1))
+        self.assertEqual(data["bad"][0]["frame"], "tests/test_a.py:4: AssertionError")
+        out = self.junit(str(self.reports), "--top", "1").stdout
+        self.assertIn("more distinct failure(s)", out)
+
+    def test_passing_reports_exit_zero_and_bad_files_are_ignored(self):
+        ok = self.ws.tmp / "ok"
+        ok.mkdir()
+        (ok / "a.xml").write_text('<testsuite><testcase classname="A" name="x" time="0.1"/></testsuite>')
+        (ok / "broken.xml").write_text("<testsuite><oops")
+        r = self.junit(str(ok))
+        self.assertOk(r)
+        self.assertIn("1 tests: 0 failed", r.stdout)
+
+    def test_discovery_uses_default_locations_and_ignores_stale_reports(self):
+        proj = self.ws.tmp / "proj"
+        rep = proj / "svc" / "target" / "surefire-reports"
+        rep.mkdir(parents=True)
+        (rep / "TEST-a.xml").write_text(SUREFIRE)
+        self.assertEqual(self.junit(cwd=proj).returncode, 1)
+        old = time.time() - 3 * 3600
+        os.utime(rep / "TEST-a.xml", (old, old))
+        self.assertIn("no JUnit reports found", self.junit(cwd=proj).stdout)
+        self.assertEqual(self.junit("--since", "400", cwd=proj).returncode, 1)
+        (proj / "node_modules" / "x" / "target" / "surefire-reports").mkdir(parents=True)
+        self.assertNotIn("node_modules", self.junit("--since", "400", cwd=proj).stdout)
+
+    def test_option_errors(self):
+        for args in (("--since", "x"), ("--top",), ("--bogus",)):
+            self.assertNotEqual(self.junit(*args).returncode, 0, args)
+
+
+class TestJunitInTestRuns(Base):
+    def make(self, extra_cmd="", reports=None):
+        script = self.ws.tmp / "fail.sh"
+        report = self.ws.tmp / "TEST-com.acme.PayTest.xml"
+        report.write_text(SUREFIRE)
+        script.write_text(f"mkdir -p target/surefire-reports && cp {report} target/surefire-reports/ && echo noisy build line && {extra_cmd} exit 1\n")
+        cfg = DEFAULT_TOML.replace('unit = "echo unit-lib"', f'unit = "sh {script}"' + (f'\nreports = {json.dumps(reports)}' if reports else ""))
+        self.ws.set_toml(cfg)
+        return self.ws.batch("b1") / "lib"
+
+    def test_a_failing_run_prints_the_summary_instead_of_the_log_tail(self):
+        wt = self.make()
+        r = self.ws.ms("test", "t0", cwd=wt)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("FAIL t0 lib", r.stderr)
+        self.assertIn("5 tests: 2 failed, 1 errors", r.stderr)
+        self.assertIn("Refund.java:42", r.stderr)
+        self.assertNotIn("noisy build line", r.stderr)
+        kept = self.ws.root / ".ms-workspace" / "tests" / "lib-t0.log"
+        self.assertIn(f"full output: {kept}", r.stderr)
+        self.assertIn("noisy build line", kept.read_text())
+
+    def test_without_reports_the_tail_is_still_shown(self):
+        self.ws.set_toml(DEFAULT_TOML.replace('unit = "echo unit-lib"', 'unit = "echo plain failure text; exit 2"'))
+        wt = self.ws.batch("b1") / "lib"
+        r = self.ws.ms("test", "t0", cwd=wt)
+        self.assertIn("plain failure text", r.stderr)
+        self.assertNotIn("full output:", r.stderr)
+
+    def test_reports_from_an_older_run_are_not_reused(self):
+        wt = self.make()
+        old_dir = wt / "target" / "surefire-reports"
+        old_dir.mkdir(parents=True)
+        stale = old_dir / "TEST-old.xml"
+        stale.write_text(SUREFIRE.replace("PayTest", "StaleTest"))
+        t = time.time() - 7200
+        os.utime(stale, (t, t))
+        self.ws.set_toml(DEFAULT_TOML.replace('unit = "echo unit-lib"', 'unit = "echo nothing new; exit 1"'))
+        r = self.ws.ms("test", "t0", cwd=wt)
+        self.assertNotIn("StaleTest", r.stderr)
+        self.assertIn("nothing new", r.stderr)
+
+    def test_report_globs_can_be_configured(self):
+        script = self.ws.tmp / "custom.sh"
+        report = self.ws.tmp / "r.xml"
+        report.write_text(SUREFIRE)
+        script.write_text(f"mkdir -p out && cp {report} out/results.xml && exit 1\n")
+        self.ws.set_toml(DEFAULT_TOML.replace('unit = "echo unit-lib"', f'unit = "sh {script}"\nreports = ["out/*.xml"]'))
+        r = self.ws.ms("test", "t0", cwd=self.ws.batch("b1") / "lib")
+        self.assertIn("5 tests: 2 failed", r.stderr)
+
+
+# --------------------------------------------------------------- Maven modules
+def pom(artifact, deps=(), modules=(), parent=None, packaging="jar", group="com.acme", extra="", profile_modules=()):
+    dep_xml = "".join(f"<dependency><groupId>{g}</groupId><artifactId>{a}</artifactId>" + (f"<scope>{sc}</scope>" if sc else "") + "</dependency>" for g, a, sc in deps)
+    mod_xml = "".join(f"<module>{m}</module>" for m in modules)
+    prof = f"<profiles><profile><id>all</id><modules>{''.join(f'<module>{m}</module>' for m in profile_modules)}</modules></profile></profiles>" if profile_modules else ""
+    par = f"<parent><groupId>{parent[0]}</groupId><artifactId>{parent[1]}</artifactId><version>1.0</version></parent>" if parent else ""
+    grp = "" if parent else f"<groupId>{group}</groupId>"
+    return (f'<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>{par}{grp}<artifactId>{artifact}</artifactId>'
+            f"<version>1.0</version><packaging>{packaging}</packaging>{extra}"
+            + (f"<modules>{mod_xml}</modules>" if mod_xml else "") + (f"<dependencies>{dep_xml}</dependencies>" if dep_xml else "") + prof + "</project>")
+
+
+class MavenBase(Base):
+    """lib/ is the root; modules sources/{a,b,c}/{api,core}, sources/app and a leaf `tool`."""
+
+    def setUp(self):
+        super().setUp()
+        root = self.ws.root / "lib"
+        files = {
+            "pom.xml": pom("parent", modules=["sources/a", "sources/b", "sources/c", "sources/app"], packaging="pom",
+                           extra="<properties><acme.group>com.acme</acme.group></properties>", profile_modules=["tool"]),
+            "sources/a/pom.xml": pom("a", modules=["api", "core"], parent=("com.acme", "parent"), packaging="pom"),
+            "sources/a/api/pom.xml": pom("a-api", parent=("com.acme", "a")),
+            "sources/a/core/pom.xml": pom("a-core", parent=("com.acme", "a"), deps=[("com.acme", "a-api", None)]),
+            "sources/b/pom.xml": pom("b", modules=["api", "core"], parent=("com.acme", "parent"), packaging="pom"),
+            "sources/b/api/pom.xml": pom("b-api", parent=("com.acme", "b")),
+            "sources/b/core/pom.xml": pom("b-core", parent=("com.acme", "b"), deps=[("com.acme", "b-api", None), ("${acme.group}", "a-core", None)]),
+            "sources/c/pom.xml": pom("c", modules=["core"], parent=("com.acme", "parent"), packaging="pom"),
+            "sources/c/core/pom.xml": pom("c-core", parent=("com.acme", "c"), deps=[("com.acme", "a-api", None), ("com.acme", "b-core", "test"), ("org.junit", "junit", "test")]),
+            "sources/app/pom.xml": pom("app", parent=("com.acme", "parent"), deps=[("com.acme", "c-core", None)]),
+            "tool/pom.xml": pom("tool", parent=("com.acme", "parent")),
+        }
+        for rel, text in files.items():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(text)
+        self.ws.git(root, "add", "-A")
+        self.ws.git(root, "commit", "-q", "-m", "reactor")
+        self.ws.git(root, "push", "-q", "origin", "next")   # batches start from origin/next
+        self.lib = root
+
+    def mods(self, *args, cwd=None, **kw):
+        return self.ws.ms("modules", *args, cwd=cwd or self.lib, **kw)
+
+
+class TestModules(MavenBase):
+    def test_summary_counts_modules_including_those_declared_in_profiles(self):
+        out = self.mods().stdout
+        self.assertIn("lib: 11 modules", out)
+        self.assertIn("jar", out)
+        self.assertIn("Cycles: 0", out)
+        data = json.loads(self.mods("--json").stdout)
+        self.assertIn("tool", data["graph"], "a module declared only inside a profile is found")
+        self.assertEqual(data["graph"]["sources/b/core"]["artifactId"], "b-core")
+
+    def test_dependencies_inherit_group_ids_and_resolve_properties(self):
+        graph = json.loads(self.mods("--json").stdout)["graph"]
+        edges = {(rel, e["to"], e["scope"]) for rel, m in graph.items() for e in m["edges"]}
+        self.assertIn(("sources/b/core", "sources/a/core", "compile"), edges, "${acme.group} resolved")
+        self.assertIn(("sources/a/core", "sources/a/api", "compile"), edges)
+        self.assertIn(("sources/a/core", "sources/a", "parent"), edges)
+        self.assertIn(("sources/c/core", "sources/b/core", "test"), edges)
+        self.assertFalse([e for e in edges if "junit" in e[1]], "external artifacts are not edges")
+
+    def test_deps_and_rdeps(self):
+        self.assertIn("sources/b/core: 2 dependents: sources/app, sources/c/core", self.mods("rdeps", "b-core").stdout)
+        r = self.mods("rdeps", "sources/a/api").stdout
+        for m in ("sources/a/core", "sources/b/core", "sources/c/core", "sources/app"):
+            self.assertIn(m, r)
+        self.assertIn("sources/a/api", self.mods("deps", "a-core").stdout)
+        self.assertIn("tool: 1 dependencies: .", self.mods("deps", "tool").stdout, "a child depends on its parent pom")
+        self.assertNotEqual(self.mods("deps", "ghost").returncode, 0)
+        self.assertNotEqual(self.mods("deps").returncode, 0)
+        amb = self.mods("rdeps", "core")
+        self.assertNotEqual(amb.returncode, 0)
+        self.assertIn("ambiguous", amb.stderr)
+
+    def test_closure_is_the_changed_modules_plus_every_dependent(self):
+        out = self.mods("closure", "--changed", "sources/a/api").stdout.strip().split(",")
+        self.assertEqual(out, ["sources/a/api", "sources/a/core", "sources/app", "sources/b/core", "sources/c/core"])
+        self.assertEqual(self.mods("closure", "--changed", "tool").stdout.strip(), "tool")
+        self.assertEqual(self.mods("closure", "--changed", "").stdout.strip(), "")
+        everything = self.mods("closure", "--changed", ".").stdout.strip().split(",")
+        self.assertEqual(len(everything), 11, "changing the parent pom affects every module")
+
+    def test_closure_from_the_working_tree(self):
+        (self.lib / "sources" / "a" / "api" / "A.java").write_text("class A {}")
+        self.assertIn("sources/a/core", self.mods("closure").stdout)
+
+    def test_affected_reports_the_closure_and_the_placeholder_is_used(self):
+        d = self.ws.batch("b1", "lib")
+        self.ws.commit(d / "lib", "touch api", {"sources/a/api/A.java": "class A {}"})
+        data = json.loads(self.ws.ms("affected", cwd=d / "lib").stdout)
+        self.assertEqual(data["modules"], ["sources/a/api"])
+        self.assertEqual(data["closure"], ["sources/a/api", "sources/a/core", "sources/app", "sources/b/core", "sources/c/core"])
+        self.ws.set_toml(DEFAULT_TOML.replace('affected = "echo affected {modules}"', 'affected = "echo closure={closure} modules={modules}"'))
+        out = self.ws.ms("test", "t0", cwd=d / "lib").stdout
+        self.assertIn("closure=sources/a/api,sources/a/core,sources/app,sources/b/core,sources/c/core", out)
+
+    def test_cycles_are_found(self):
+        (self.lib / "sources" / "a" / "api" / "pom.xml").write_text(pom("a-api", parent=("com.acme", "a"), deps=[("com.acme", "a-core", None)]))
+        r = self.mods("check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("CYCLE", r.stdout)
+        self.assertIn("sources/a/api", r.stdout)
+        self.assertIn("1 cycle(s)", r.stdout)
+
+    def test_architecture_rules_report_violations_with_their_edge(self):
+        self.ws.set_toml(DEFAULT_TOML + """
+[[arch.rule]]
+name = "never depend on another module's core"
+repo = "lib"
+from = ["sources/*/core", "sources/app"]
+forbid = "sources/*/core"
+allow_same_group = true
+""")
+        r = self.mods("check")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("VIOLATION never depend on another module's core: sources/b/core -> sources/a/core (compile)", r.stdout)
+        self.assertIn("VIOLATION never depend on another module's core: sources/app -> sources/c/core (compile)", r.stdout)
+        self.assertNotIn("sources/c/core -> sources/b/core", r.stdout, "test-scope edges are not checked by default")
+        self.assertNotIn("a/core -> sources/a/api", r.stdout)
+        self.assertIn("2 rule violation(s) (1 rule(s) applied)", r.stdout)
+
+    def test_rule_options_except_include_test_and_other_repos(self):
+        base = DEFAULT_TOML + """
+[[arch.rule]]
+name = "r"
+from = "sources/*/core"
+forbid = "sources/*/core"
+include_test = true
+except = "sources/a/core"
+"""
+        self.ws.set_toml(base)
+        out = self.mods("check").stdout
+        self.assertIn("sources/c/core -> sources/b/core (test)", out)
+        self.assertNotIn("-> sources/a/core", out, "except lists allowed targets")
+        self.ws.set_toml(base.replace('name = "r"', 'name = "r"\nrepo = "other"'))
+        self.assertIn("0 rule violation(s) (0 rule(s) applied)", self.mods("check").stdout)
+
+    def test_a_repo_without_a_pom_and_the_repo_option(self):
+        r = self.mods(cwd=self.ws.root / "app")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("no pom.xml", r.stderr)
+        self.assertIn("lib: 11 modules", self.ws.ms("modules", "--repo", "lib", cwd=self.ws.root).stdout)
+        self.assertNotEqual(self.ws.ms("modules", "--repo", "ghost", cwd=self.ws.root).returncode, 0)
+        self.assertNotEqual(self.mods("--bogus").returncode, 0)
+
+
+# ---------------------------------------------------------------------- recall
+class TestRecall(Base):
+    def setUp(self):
+        super().setUp()
+        self.proj = self.ws.home / ".claude" / "projects" / "-proj"
+        self.proj.mkdir(parents=True)
+
+    def line(self, role, text, cwd=None, ts="2026-10-15T10:00:00.000Z", **extra):
+        content = text if role == "user" and isinstance(text, str) else [{"type": "text", "text": text}] if isinstance(text, str) else text
+        return json.dumps({"type": role, "timestamp": ts, "cwd": str(cwd or self.ws.root / "lib"), "sessionId": "s",
+                           "message": {"role": role, "content": content}, **extra})
+
+    def session(self, name, lines, mtime=None):
+        f = self.proj / f"{name}.jsonl"
+        f.write_text("\n".join(lines) + "\n")
+        if mtime:
+            os.utime(f, (mtime, mtime))
+        return f
+
+    def recall(self, *args):
+        return self.ws.ms("recall", *args)
+
+    def test_finds_what_was_said_by_either_side_and_points_to_the_session(self):
+        self.session("abcd1234-0000-0000-0000-000000000000", [
+            self.line("user", "How should we handle the refund rounding for partial payments?"),
+            self.line("assistant", "We decided to round half up at the line level and keep cents as integers.")])
+        out = self.recall("refund", "rounding").stdout
+        self.assertIn("session abcd1234 user", out)
+        self.assertIn("[refund] [rounding]", out)
+        out = self.recall("integers").stdout
+        self.assertIn("session abcd1234 assistant", out)
+        self.assertIn("claude --resume abcd1234-0000-0000-0000-000000000000", out)
+
+    def test_only_conversation_text_is_indexed(self):
+        self.session("s1", [
+            self.line("user", [{"type": "tool_result", "tool_use_id": "x", "content": "uniqueoutputtoken from a tool"}]),
+            self.line("assistant", [{"type": "tool_use", "id": "y", "name": "Bash", "input": {"command": "uniquecommandtoken"}}]),
+            self.line("user", "<system-reminder>reminderonlytoken rules</system-reminder> And a real question about invoices please"),
+            self.line("user", "metaonlytoken is hidden text of a meta message", isMeta=True),
+            self.line("assistant", "ok")])
+        for hidden in ("uniqueoutputtoken", "uniquecommandtoken", "reminderonlytoken", "metaonlytoken"):
+            self.assertIn("(no matches)", self.recall(hidden).stdout, hidden)
+        self.assertIn("invoices", self.recall("invoices").stdout)
+
+    def test_sessions_outside_the_workspace_and_old_ones_are_left_out(self):
+        self.session("inside", [self.line("user", "Discussing the tenant isolation strategy for reports")])
+        self.session("outside", [self.line("user", "Discussing the tenant isolation strategy elsewhere", cwd=self.ws.tmp / "other")])
+        out = self.recall("tenant", "isolation").stdout
+        self.assertEqual(out.count("session "), 1)
+        self.assertIn("for reports", out)
+        old = time.time() - 200 * 86400
+        self.session("ancient", [self.line("user", "A conversation from long ago about gazebo permits")], mtime=old)
+        self.assertIn("(no matches)", self.recall("gazebo").stdout)
+        self.assertIn("gazebo", self.recall("gazebo", "--days", "400").stdout)
+
+    def test_new_messages_are_found_without_reindexing_by_hand(self):
+        f = self.session("s1", [self.line("user", "First message about the ledger posting rules")])
+        self.assertIn("ledger", self.recall("ledger").stdout)
+        self.assertIn("indexed 0 new", self.recall("index").stdout)
+        with open(f, "a") as fh:
+            fh.write(self.line("assistant", "Later we added the amortization schedule to the ledger") + "\n")
+        out = self.recall("amortization").stdout
+        self.assertIn("session s1 assistant", out)
+        self.assertIn("indexed 0 new", self.recall("index").stdout)
+
+    def test_a_half_written_last_line_waits_for_the_next_refresh(self):
+        f = self.session("s1", [self.line("user", "Complete message about depreciation methods")])
+        self.recall("index")
+        full = self.line("user", "Second message about the straightline depreciation calendar")
+        with open(f, "a") as fh:
+            fh.write(full[:60])
+        self.assertIn("(no matches)", self.recall("straightline").stdout)
+        with open(f, "a") as fh:
+            fh.write(full[60:] + "\n")
+        self.assertIn("straightline", self.recall("straightline").stdout)
+
+    def test_secrets_are_masked_before_indexing(self):
+        key = "AKIA" + "ABCDEFGHIJKLMNOP"
+        self.session("s1", [self.line("user", f"I pasted the key {key} and password = \"Zx9kQ7vLm2pRt8\" by mistake in the config")])
+        self.assertIn("(no matches)", self.recall(key).stdout)
+        self.assertIn("(no matches)", self.recall("Zx9kQ7vLm2pRt8").stdout)
+        out = self.recall("pasted", "mistake").stdout
+        self.assertIn("***", out)
+        self.assertNotIn(key, out)
+
+    def test_memory_notes_and_the_log_are_searchable(self):
+        self.assertOk(self.ws.ms("memory", "add", "--type", "decision", "--title", "Cash rounding", "Always round cash payments to the nearest fifty pesos."))
+        self.ws.batch("b1", "lib")
+        out = self.recall("fifty", "pesos").stdout
+        self.assertIn("memory [decision] Cash rounding", out)
+        self.assertIn("nearest [fifty] [pesos]", out)
+        self.assertIn("log batch.new ok", self.recall("origin", "next").stdout)
+        self.assertNotIn("memory", self.recall("origin", "next", "--kind", "log").stdout)
+        self.assertIn("(no matches)", self.recall("fifty", "--kind", "session").stdout)
+        self.assertNotEqual(self.recall("x", "--kind", "bogus").returncode, 0)
+
+    def test_query_semantics_and_awkward_input(self):
+        self.session("s1", [self.line("user", "We need to refund the customer and also adjust the invoice"),
+                            self.line("user", "A different message that only mentions the warehouse inventory")])
+        self.assertEqual(self.recall("refund", "invoice").stdout.count("session "), 1)
+        self.assertEqual(self.recall("refund", "warehouse").stdout.strip(), "(no matches)")
+        self.assertEqual(self.recall("refund", "warehouse", "--any").stdout.count("session "), 2)
+        self.assertIn("refund", self.recall("refu").stdout, "the last word matches as a prefix")
+        for awkward in ('"quoted"', "it's", "a-b:c", "(parens)", "50%", "x AND", "*"):
+            r = self.recall(awkward)
+            self.assertEqual(r.returncode, 0, awkward)
+            self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("refund", self.recall("NEAR(refund invoice, 8)", "--raw").stdout)
+        bad = self.recall("refund AND OR", "--raw")
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertIn("could not run that search", bad.stderr)
+
+    def test_limit_status_rebuild_and_usage(self):
+        self.session("s1", [self.line("user", f"Message number {i} about the pricing engine") for i in range(6)])
+        self.assertEqual(self.recall("pricing", "-n", "2").stdout.count("session s1"), 2)
+        self.assertRegex(self.recall("status").stdout, r"session 6")
+        self.assertIn("indexed 6 new", self.recall("index", "--rebuild").stdout)
+        self.assertNotEqual(self.recall().returncode, 0)
+        self.assertNotEqual(self.recall("x", "--bogus").returncode, 0)
+        fresh = WS()
+        self.addCleanup(fresh.close)
+        self.assertIn("no index yet", fresh.ms("recall", "status").stdout)
+
+
+# --------------------------------------------------------------------- handoff
+class TestHandoff(Base):
+    def setUp(self):
+        super().setUp()
+        self.d = self.ws.batch("b1")
+        self.ws.commit(self.d / "lib", "feature x", {"x.txt": "1"})
+        (self.d / "lib" / "wip.txt").write_text("unfinished")
+        self.assertOk(self.ws.ms("agent", "new", "b1", "t1", "lib"))
+        self.ws.commit(self.d / ".agents" / "t1" / "lib", "agent work", {"a.txt": "1"})
+        (self.d / "TASKS.md").write_text("# Batch: b1\n\n## Tasks\n- [ ] lib: fix the refund rounding\n- [x] app: done already\n- [ ] app: add the report\n")
+
+    def autos(self):
+        out = self.ws.ms("memory", "list", "--type", "handoff").stdout
+        return [l for l in out.splitlines() if "auto handoff" in l]
+
+    def hook(self, event, cwd=None, **extra):
+        payload = {"hook_event_name": event, "cwd": str(cwd or self.d / "lib"), "session_id": "s1", **extra}
+        r = self.ws.ms("handoff", "--hook", input=json.dumps(payload))
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""), "a hook never fails or prints")
+
+    def snapshot(self, used):
+        now = int(time.time())
+        self.ws.cache.mkdir(exist_ok=True)
+        (self.ws.cache / "usage.json").write_text(json.dumps({"captured_at": now, "five_hour": {"used_percentage": used, "resets_at": now + 7200},
+                                                              "seven_day": {"used_percentage": 10, "resets_at": now + 86400 * 4}}))
+
+    def test_manual_handoff_captures_what_is_needed_to_resume(self):
+        r = self.ws.ms("handoff", "--batch", "b1")
+        self.assertOk(r)
+        body = self.ws.ms("memory", "show", "auto").stdout
+        for want in ("lib: 1 commit(s) ahead of next [feature x]", "1 uncommitted file(s): wip.txt", "agent branches not integrated: agent/b1/t1",
+                     "open tasks: lib: fix the refund rounding; app: add the report", "next: commit or discard the uncommitted changes; run `ms-workspace integrate b1`",
+                     "recent: "):
+            self.assertIn(want, body)
+        self.assertNotIn("done already", body)
+        self.assertIn("app: 0 commit(s) ahead of next", body)
+        self.assertEqual(len(self.autos()), 1)
+
+    def test_print_does_not_write_and_repeats_replace_the_previous_note(self):
+        self.assertIn("lib: 1 commit(s)", self.ws.ms("handoff", "--print").stdout)
+        self.assertEqual(self.autos(), [])
+        self.ws.ms("handoff")
+        (self.d / "lib" / "more.txt").write_text("x")
+        self.ws.ms("handoff")
+        self.assertEqual(len(self.autos()), 1)
+        self.assertIn("2 uncommitted file(s)", self.ws.ms("memory", "show", "auto").stdout)
+
+    def test_agent_worktrees_with_uncommitted_work_are_reported(self):
+        (self.d / ".agents" / "t1" / "lib" / "half.txt").write_text("x")
+        self.assertIn("agent worktrees with uncommitted work: t1 (1 uncommitted)", self.ws.ms("handoff", "--print").stdout)
+
+    def test_a_clean_integrated_batch_says_what_to_do_next(self):
+        self.assertOk(self.ws.ms("integrate", "b1", "--dry-run"))
+        (self.d / "lib" / "wip.txt").unlink()
+        self.assertOk(self.ws.ms("integrate", "b1"))
+        out = self.ws.ms("handoff", "--print").stdout
+        self.assertIn("next: `ms-workspace test t1 b1`, then `plan b1`", out)
+
+    def test_hook_events_pre_compact_and_session_end_write_only_when_something_changed(self):
+        self.hook("PreCompact")
+        self.assertEqual(len(self.autos()), 1)
+        before = self.ws.log_lines("--action", "handoff").count("auto (PreCompact)")
+        self.hook("PreCompact")
+        self.assertEqual(self.ws.log_lines("--action", "handoff").count("auto (PreCompact)"), before, "unchanged state is not rewritten")
+        (self.d / "lib" / "new.txt").write_text("x")
+        self.hook("SessionEnd")
+        self.assertIn("2 uncommitted file(s)", self.ws.ms("memory", "show", "auto").stdout)
+        self.assertEqual(len(self.autos()), 1)
+
+    def test_stop_only_writes_when_plan_usage_is_getting_high_and_not_too_often(self):
+        self.snapshot(20)
+        self.hook("Stop")
+        self.assertEqual(self.autos(), [])
+        self.snapshot(80)
+        self.hook("Stop")
+        self.assertEqual(len(self.autos()), 1)
+        (self.d / "lib" / "again.txt").write_text("x")
+        self.hook("Stop")
+        self.assertIn("1 uncommitted file(s)", self.ws.ms("memory", "show", "auto").stdout, "no second write within ten minutes")
+
+    def test_hook_picks_the_only_active_batch_and_ignores_other_cases(self):
+        self.hook("PreCompact", cwd=self.ws.root)                 # one active batch: it is the obvious one
+        self.assertEqual(len(self.autos()), 1)
+        self.ws.batch("b2", "lib")
+        self.ws.ms("memory", "forget", "auto")
+        self.hook("PreCompact", cwd=self.ws.root)                 # two batches and no way to tell: do nothing
+        self.assertEqual(self.autos(), [])
+        self.hook("PostToolUse")
+        self.hook("PreCompact", cwd=self.ws.tmp)                  # outside a workspace
+        self.assertEqual(self.autos(), [])
+        for payload in ("", "garbage", "{}"):
+            self.assertEqual(self.ws.ms("handoff", "--hook", input=payload).returncode, 0)
+
+    def test_context_shows_it_and_clean_removes_it(self):
+        self.ws.ms("handoff")
+        self.assertIn("HANDOFF b1: Auto handoff written at", self.ws.ms("context").stdout)
+        self.assertOk(self.ws.ms("clean", "b1", "--force"))
+        self.assertEqual(self.autos(), [])
+
+    def test_errors(self):
+        self.assertNotEqual(self.ws.ms("handoff", "--batch", "ghost").returncode, 0)
+        self.assertNotEqual(self.ws.ms("handoff", "--bogus").returncode, 0)
+        self.assertNotEqual(self.ws.ms("handoff", cwd=self.ws.tmp).returncode, 0)
+
+    def test_hooks_are_registered_in_the_settings_example(self):
+        hooks = json.loads((REPO / "settings" / "hooks.example.json").read_text())["hooks"]
+        for event in ("PreCompact", "Stop", "SessionEnd"):
+            cmds = [h["command"] for g in hooks[event] for h in g["hooks"]]
+            self.assertIn("ms-workspace handoff --hook", cmds, event)
+
+
+# --------------------------------------------------------------------- release
+class TestRelease(Base):
+    TOML = DEFAULT_TOML.replace('[repos.lib]\nbase = "next"', '[repos.lib]\nbase = "next"\nrelease = ["qa", "main"]')
+
+    def setUp(self):
+        super().setUp()
+        self.ws.set_toml(self.TOML)
+        self.lib = self.ws.root / "lib"
+        for branch in ("qa", "main"):
+            self.ws.git(self.lib, "branch", branch)
+            self.ws.git(self.lib, "push", "-q", "origin", branch)
+        for i, subject in enumerate(["feat(pay): add partial refunds", "fix: round half up", "fix(core)!: drop the legacy endpoint", "docs: explain refunds",
+                                     "chore: bump the parent pom", "tweak the thing nobody labelled", "feat: export to csv"]):
+            self.ws.commit(self.lib, subject, {f"f{i}.txt": str(i)})
+        self.ws.git(self.lib, "push", "-q", "origin", "next")
+
+    def release(self, *args):
+        return self.ws.ms("release", *args)
+
+    def test_status_counts_commit_types_authors_and_the_waiting_commits(self):
+        out = self.release("status").stdout
+        self.assertIn("lib: next -> qa: 7 commit(s) waiting (2 feat, 2 fix, 1 chore, 1 docs, 1 other)", out)
+        self.assertIn("lib: next -> main: 7 commit(s) waiting", out)
+        self.assertIn("1 author(s)", out)
+        self.assertIn("7 files changed", out)
+        self.assertIn("feat: export to csv", out)
+        self.assertIn("and 2 more", out)
+        self.assertIn("BREAKING: fix(core)!: drop the legacy endpoint", out)
+
+    def test_up_to_date_and_hotfix_drift(self):
+        self.ws.git(self.lib, "checkout", "-q", "qa")
+        self.ws.commit(self.lib, "fix: emergency patch made directly on qa", {"hot.txt": "1"})
+        self.ws.git(self.lib, "push", "-q", "origin", "qa")
+        self.ws.git(self.lib, "checkout", "-q", "next")
+        out = self.release("status").stdout
+        self.assertIn("WARNING qa has 1 commit(s) that next does not (hotfix drift)", out)
+        self.assertIn("emergency patch", out)
+        self.ws.git(self.lib, "checkout", "-q", "main")
+        self.ws.git(self.lib, "merge", "-q", "--ff-only", "next")
+        self.ws.git(self.lib, "push", "-q", "origin", "main")
+        self.ws.git(self.lib, "checkout", "-q", "next")
+        self.assertIn("lib: next -> main: up to date", self.release("status").stdout)
+
+    def test_notes_are_grouped_by_type_and_flag_breaking_changes(self):
+        out = self.release("notes").stdout
+        self.assertIn("## lib: next -> qa (7 change(s))", out)
+        self.assertLess(out.index("### Features (2)"), out.index("### Fixes (2)"))
+        self.assertIn("- add partial refunds (", out)
+        self.assertIn("- drop the legacy endpoint **BREAKING** (", out)
+        self.assertIn("### Other (1)", out)
+        self.assertIn("- tweak the thing nobody labelled (", out)
+        self.assertNotIn("feat(pay)", out, "the type prefix is removed from the line")
+
+    def test_notes_limit_is_shared_between_types_and_target_can_change(self):
+        out = self.release("notes", "--max", "3").stdout
+        self.assertIn("### Features (2)", out)
+        self.assertIn("### Other (1)", out)
+        self.assertNotIn("... and", out, "three lines per type fit everything here")
+        self.assertIn("## lib: next -> main", self.release("notes", "lib", "--to", "main").stdout)
+
+    def test_merge_commits_are_not_listed(self):
+        self.ws.git(self.lib, "checkout", "-q", "-b", "side", "qa")
+        self.ws.commit(self.lib, "feat: side feature", {"side.txt": "1"})
+        self.ws.git(self.lib, "checkout", "-q", "next")
+        self.ws.git(self.lib, "merge", "-q", "--no-ff", "-m", "Merge branch side into next", "side")
+        self.ws.git(self.lib, "push", "-q", "origin", "next")
+        out = self.release("notes").stdout
+        self.assertNotIn("Merge branch side", out)
+        self.assertIn("side feature", out)
+
+    def test_fetch_picks_up_new_remote_commits(self):
+        mate = self.ws.tmp / "mate"
+        self.ws.git(self.ws.tmp, "clone", "-q", str(self.ws.tmp / "remote-lib.git"), str(mate))
+        self.ws.git(mate, "checkout", "-q", "next")
+        self.ws.commit(mate, "fix: pushed by a teammate", {"mate.txt": "1"})
+        self.ws.git(mate, "push", "-q", "origin", "next")
+        self.assertIn("7 commit(s)", self.release("status").stdout)
+        self.assertIn("8 commit(s)", self.release("status", "--fetch").stdout)
+
+    def test_repos_without_release_branches_and_bad_input(self):
+        self.ws.set_toml(DEFAULT_TOML)
+        self.assertIn("no repo has `release", self.release("status").stdout)
+        self.assertIn("no release branch configured", self.release("notes", "lib").stdout)
+        self.ws.set_toml(self.TOML)
+        self.assertNotEqual(self.release("status", "ghost").returncode, 0)
+        self.assertNotEqual(self.release("frobnicate").returncode, 0)
+        self.assertNotEqual(self.release("notes", "--max", "x").returncode, 0)
+        self.assertNotEqual(self.release("notes", "--bogus").returncode, 0)
+        missing = self.release("notes", "lib", "--to", "nope")
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("cannot find", missing.stderr)
+
+
+# ---------------------------------------------------------------------- notify
+class Inbox:
+    """A local HTTP endpoint that records what is posted to it."""
+
+    def __init__(self, status=200):
+        self.posts, self.status = [], status
+        inbox = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                inbox.posts.append({"path": self.path, "headers": dict(self.headers), "body": self.rfile.read(length).decode()})
+                self.send_response(inbox.status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class TestNotify(Base):
+    def setUp(self):
+        super().setUp()
+        self.inbox = Inbox()
+        self.addCleanup(self.inbox.close)
+
+    def configure(self, extra="", kind="ntfy"):
+        self.ws.set_toml(DEFAULT_TOML.replace('name = "t"', 'name = "shop"') + f'\n[notify]\nkind = "{kind}"\nurl = "{self.inbox.url}/topic-x"\n{extra}')
+
+    def test_ntfy_posts_the_message_with_title_and_priority(self):
+        self.configure()
+        r = self.ws.ms("notify", "Build", "finished", "--title", "Done", "--priority", "high")
+        self.assertOk(r)
+        post = self.inbox.posts[0]
+        self.assertEqual((post["path"], post["body"]), ("/topic-x", "Build finished"))
+        self.assertEqual(post["headers"]["Title"], "shop: Done")
+        self.assertEqual(post["headers"]["Priority"], "high")
+        self.assertEqual(post["headers"]["Tags"], "ms-workspace")
+
+    def test_webhook_sends_json_with_a_configurable_field(self):
+        self.configure(kind="webhook")
+        self.assertOk(self.ws.ms("notify", "hello there"))
+        self.assertEqual(json.loads(self.inbox.posts[0]["body"]), {"text": "shop: Notification: hello there"})
+        self.configure('field = "content"', kind="webhook")
+        self.assertOk(self.ws.ms("notify", "second", "--title", "T"))
+        self.assertEqual(json.loads(self.inbox.posts[1]["body"]), {"content": "shop: T: second"})
+
+    def test_command_kind_runs_locally_with_the_message_in_the_environment(self):
+        out = self.ws.tmp / "got.txt"
+        self.ws.set_toml(DEFAULT_TOML + f'\n[notify]\ncommand = "echo \\"$MS_NOTIFY_TITLE|$MS_NOTIFY_MESSAGE|$MS_NOTIFY_PRIORITY\\" > {out}"\n')
+        self.assertOk(self.ws.ms("notify", "local one", "--priority", "low"))
+        self.assertEqual(out.read_text().strip(), "t: Notification|local one|low")
+        self.ws.set_toml(DEFAULT_TOML + '\n[notify]\ncommand = "exit 3"\n')
+        r = self.ws.ms("notify", "x")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("the command failed", r.stderr)
+
+    def test_secrets_are_masked_and_long_text_is_cut(self):
+        self.configure()
+        key = "AKIA" + "ABCDEFGHIJKLMNOP"
+        self.ws.ms("notify", f"deploy used {key} and password = \"Zx9kQ7vLm2pRt8\"")
+        self.ws.ms("notify", "y" * 900)
+        body = self.inbox.posts[0]["body"]
+        self.assertNotIn(key, body)
+        self.assertNotIn("Zx9kQ7vLm2pRt8", body)
+        self.assertIn("***", body)
+        self.assertEqual(len(self.inbox.posts[1]["body"]), 300)
+
+    def test_identical_messages_are_sent_once_within_thirty_seconds(self):
+        self.configure()
+        self.ws.ms("notify", "same thing")
+        again = self.ws.ms("notify", "same thing")
+        self.assertOk(again)
+        self.assertIn("skipped", again.stdout)
+        self.ws.ms("notify", "another thing")
+        self.assertEqual(len(self.inbox.posts), 2)
+        self.ws.ms("notify", "--test")
+        self.ws.ms("notify", "--test")
+        self.assertEqual(len(self.inbox.posts), 4, "--test always sends")
+
+    def test_not_configured_is_an_error_by_hand_and_silent_in_hooks(self):
+        r = self.ws.ms("notify", "hello")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("not configured", r.stderr)
+        hook = self.ws.ms("notify", "--hook", input=json.dumps({"message": "x"}))
+        self.assertEqual((hook.returncode, hook.stdout, hook.stderr), (0, "", ""))
+
+    def test_the_notification_hook_forwards_claude_codes_message(self):
+        self.configure()
+        self.ws.ms("notify", "--hook", input=json.dumps({"hook_event_name": "Notification", "message": "Claude needs your permission to use Bash", "title": "Claude Code"}))
+        post = self.inbox.posts[0]
+        self.assertEqual(post["body"], "Claude needs your permission to use Bash")
+        self.assertEqual(post["headers"]["Priority"], "high")
+        for payload in ("", "garbage", "[]", "{}"):
+            self.assertEqual(self.ws.ms("notify", "--hook", input=payload).returncode, 0, payload)
+
+    def test_bad_destinations_fail_clearly_but_never_break_hooks(self):
+        for url in ("file:///etc/passwd", "ftp://example.com/x", "not a url"):
+            self.ws.set_toml(DEFAULT_TOML + f'\n[notify]\nurl = "{url}"\n')
+            r = self.ws.ms("notify", "x")
+            self.assertEqual(r.returncode, 1, url)
+            self.assertIn("http:// or https://", r.stderr)
+        self.ws.set_toml(DEFAULT_TOML + '\n[notify]\nurl = "http://127.0.0.1:9/none"\n')
+        r = self.ws.ms("notify", "x")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("could not send", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(self.ws.ms("notify", "--hook", input=json.dumps({"message": "y"})).returncode, 0)
+        self.inbox.status = 500
+        self.configure()
+        self.assertIn("answered 500", self.ws.ms("notify", "z").stderr)
+
+    def test_a_failed_send_does_not_block_the_retry(self):
+        self.ws.set_toml(DEFAULT_TOML + '\n[notify]\nurl = "http://127.0.0.1:9/none"\n')
+        self.assertEqual(self.ws.ms("notify", "retry me").returncode, 1)
+        self.configure()
+        again = self.ws.ms("notify", "retry me")
+        self.assertOk(again)
+        self.assertNotIn("skipped", again.stdout)
+        self.assertEqual(len(self.inbox.posts), 1)
+
+    def test_input_errors(self):
+        self.configure()
+        for args in ((), ("--priority", "loud", "x"), ("--bogus", "x")):
+            self.assertNotEqual(self.ws.ms("notify", *args).returncode, 0, args)
+
+    def test_ship_notifies_when_it_is_listed_in_on(self):
+        self.configure('on = ["ship"]')
+        d = self.ws.batch("b1", "lib")
+        self.ws.commit(d / "lib", "feature", {"f.txt": "1"})
+        self.ws.ms("plan", "b1")
+        self.assertEqual(self.inbox.posts, [], "a plan sends nothing")
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e"))
+        self.assertEqual(len(self.inbox.posts), 1)
+        self.assertEqual(self.inbox.posts[0]["headers"]["Title"], "shop: Shipped")
+        self.assertIn("batch b1 pushed: lib", self.inbox.posts[0]["body"])
+
+    def test_a_failed_ship_is_announced_with_high_priority(self):
+        self.configure('on = ["ship"]')
+        d = self.ws.batch("b1", "lib")
+        self.ws.commit(d / "lib", "feature", {"k.txt": "k = " + "AKIA" + "ABCDEFGHIJKLMNOP"})
+        r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e")
+        self.assertNotEqual(r.returncode, 0)
+        post = self.inbox.posts[0]
+        self.assertEqual(post["headers"]["Title"], "shop: Ship failed")
+        self.assertEqual(post["headers"]["Priority"], "high")
+        self.assertIn("the gate found 1 blocking", post["body"])
+
+    def test_ship_is_silent_when_on_does_not_list_it(self):
+        self.configure()
+        d = self.ws.batch("b1", "lib")
+        self.ws.commit(d / "lib", "feature", {"f.txt": "1"})
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e"))
+        self.assertEqual(self.inbox.posts, [])
+
+    def test_registered_as_a_hook_and_asks_before_agents_use_it(self):
+        data = json.loads((REPO / "settings" / "hooks.example.json").read_text())
+        self.assertEqual(data["hooks"]["Notification"][0]["hooks"][0]["command"], "ms-workspace notify --hook")
+        self.assertIn("Bash(ms-workspace notify:*)", data["permissions"]["ask"])
 
 
 if __name__ == "__main__":

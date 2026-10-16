@@ -77,7 +77,7 @@ Names are validated, and a failed `batch new` or `agent new` rolls back what it 
 
 ## Guardrails
 
-- **Permissions are narrow on purpose.** `allow` covers read-only and local subcommands (`status`, `log`, `usage`, `plan`, `test`, `integrate`, `batch new`, ...). `ship`, `undo`, `clean`, `env`, `setup-hooks`, `docker clean`, `ps kill` and `http run|bench` are in `ask`, so Claude Code always prompts before anything is pushed, deleted or run from configuration. `setup-hooks` replaces an older broad `Bash(ms-workspace:*)` rule.
+- **Permissions are narrow on purpose.** `allow` covers read-only and local subcommands (`status`, `log`, `usage`, `plan`, `test`, `integrate`, `batch new`, ...). `ship`, `undo`, `clean`, `env`, `setup-hooks`, `docker clean`, `ps kill`, `notify` and `http run|bench` are in `ask`, so Claude Code always prompts before anything is pushed, deleted or run from configuration. `setup-hooks` replaces an older broad `Bash(ms-workspace:*)` rule.
 - **The guard** (`ms-workspace guard`, a PreToolUse hook) blocks `git push`, `gh pr create|merge`, `gh api` writes, `ms-workspace ship|undo|clean|setup-hooks`, `ps kill`, `docker clean` and `env --setup` **inside batch worktrees**, including option variants, `bash -c`, `eval`, wrappers and `cd` into a batch from elsewhere. It fails closed: inside `.batches/` it decides from the command text alone, so a broken `workspace.toml` cannot open the gate. It stops mistakes and realistic variants, not a determined adversary. Blocked attempts are logged.
 - **Plan usage.** Claude Code exposes the 5h session and weekly usage only to the status line, so `ms-statusline` stores a snapshot and `ms-workspace usage` reads it: percent used and left, time to reset, pace, projection and a verdict. `usage --check` exits 0 ok, 1 warn, 2 critical, 3 no data, so skills and agents confirm with you before starting; `--need <pct|auto>` checks that a planned task fits (`auto` uses the median of past completed batches, at least 3). Thresholds come from `[usage]` in `workspace.toml` (default 70/90). Projections only influence the verdict above 50 % used. Pro/Max plans only; data appears after the first reply of a session.
 - **Token-saving hooks.** `readguard` (PreToolUse on Read) tells Claude when it is about to re-read an unchanged file that is already in its context (files under 4 000 characters are ignored; a compaction or `/clear` resets the memory, because re-reading is legitimate then). `outguard` (PostToolUse on Bash) replaces a Bash output longer than 30 000 characters with its first and last 60 lines, saves the full text to a file it names, and keeps `stderr` and the output shape. Tune it with `[context] bash_output_max_chars`, `MS_OUTGUARD_MAX_CHARS`, or turn it off with `MS_OUTGUARD=off`. Neither hook can fail a session.
@@ -155,6 +155,18 @@ Routes match top to bottom (method, `{param}` or trailing `*` path, optional `ma
 
 `clean` refuses to remove a batch while a process still runs inside it (`--force` overrides with a warning). On a shared server, `ps`, `docker` and `sys` only ever act on what the current user may touch.
 
+## Safety, quality and knowledge tools
+
+| Tool | What it does |
+|---|---|
+| `gate [batch]` | Scans the **added lines** of what would be sent for secrets (AWS, GitHub, Slack, Stripe, Google, JWT, private keys, credentials in URLs, hard-coded passwords and tokens), merge-conflict markers (only when both ends are present) and files over `max_file_kb`; debug leftovers (`console.log`, `debugger`, `.only(`, `System.out`, `printStackTrace`, `pdb`) are warnings, matched by language and spared in test files. Evidence is masked, placeholders and `word:word` values are not flagged, `ms-gate: allow` or `[gate] allow`/`ignore_paths` silence deliberate cases. `ship` runs it and stops on blocking findings (`--skip-gate` bypasses on purpose); works in a plain repo too |
+| `junit [paths] [--since MIN]` | Summarizes JUnit-style XML (Surefire/Failsafe, Gradle, vitest/jest-junit, pytest): totals, failing tests grouped by message, the first stack frame that is not framework code. When a test run fails and fresh reports exist, `test` prints this instead of the log tail and keeps the full output in `.ms-workspace/tests/` (`reports = [globs]` per repo to override discovery) |
+| `modules [deps\|rdeps <m>\|closure\|check]` | Reads the Maven reactor (modules declared at the top or inside profiles, inherited coordinates, `${properties}`): dependents of a change, the exact `closure` for `-pl` (also in `affected` and as `{closure}` in test commands), cycles, and `[[arch.rule]]` checks such as "depend on `api`, never on another module's `core`". On the real ERP it maps 131 modules in 0.2 s |
+| `recall <words>` | Full-text search (SQLite FTS5) over Claude Code sessions run in the workspace, memory notes and the log: "where did we decide X?". Secrets are masked before indexing, the index refreshes itself incrementally, results point to `claude --resume <id>` |
+| `handoff` | Writes the state needed to resume a batch (commits ahead, uncommitted files, unintegrated agent branches, open tasks, next step). Hooks write it by themselves before compaction and at session end, and on Stop when plan usage is high; one note per batch, unchanged state is not rewritten |
+| `release status\|notes [repo]` | Per repo with `release = [...]`: commits waiting to be promoted from the base branch, grouped by conventional-commit type, authors, diffstat, breaking changes, and hotfix drift (commits that exist only on `qa`/`main`); `notes` prints markdown by type |
+| `notify <msg>` | ntfy, webhook or a local command from `[notify]`; as a Notification hook it forwards "Claude needs your attention", and `on = ["ship"]` announces ship results. Nothing is configured by default, secrets are masked, repeats within 30 s are sent once, only `http(s)` URLs are accepted. A public ntfy topic can be read by anyone who guesses it |
+
 ## The workspace
 
 A workspace is a folder with several repos plus a `workspace.toml` (see `skills/ms-workspace-init/references/workspace.example.toml` for every key). The folder that holds the file is the workspace root; batches live in `.batches/` and state in `.ms-workspace/`, both outside every repo.
@@ -180,7 +192,7 @@ repo = "erp"
 
 ## Hooks
 
-`/ms-setup` (or `ms-workspace setup-hooks [--dry-run] [--remove] [--project]`) merges `settings/hooks.example.json`: idempotent, keeps every other hook, permission and setting, keeps a status line someone else configured, writes a timestamped backup. It adds `guard` and `readguard` (PreToolUse on Bash and Read), `outguard` (PostToolUse on Bash), `images capture` (Stop, SessionEnd), `context` (SessionStart), `readguard --reset` (SessionStart after `/clear` or a compaction), `ms-statusline` and the permission rules above. `install.sh` never edits your `settings.json` by itself.
+`/ms-setup` (or `ms-workspace setup-hooks [--dry-run] [--remove] [--project]`) merges `settings/hooks.example.json`: idempotent, keeps every other hook, permission and setting, keeps a status line someone else configured, writes a timestamped backup. It adds `handoff --hook` (PreCompact, Stop, SessionEnd), `notify --hook` (Notification), `guard` and `readguard` (PreToolUse on Bash and Read), `outguard` (PostToolUse on Bash), `images capture` (Stop, SessionEnd), `context` (SessionStart), `readguard --reset` (SessionStart after `/clear` or a compaction), `ms-statusline` and the permission rules above. `install.sh` never edits your `settings.json` by itself.
 
 ## Development
 
@@ -201,8 +213,7 @@ python3 -m unittest tests.test_ms_workspace.TestShip -v
 - [x] API checks (`ms-workspace http`) with assertions, masked logs, diff and bench
 - [x] Local mock server, Docker views, system information and process tools
 - [ ] First end-to-end run on real repos (Maven, pnpm, Gradle) and a live check of the image hook
+- [x] Secret gate, JUnit summaries, Maven module graph with architecture rules, recall, automatic handoff, release view and notifications
 - [ ] Exact integration plan across agents (merge-tree chain) instead of per-branch `--dry-run`
-- [ ] Secret and large-file gate before `ship`
-- [ ] Maven module graph from `pom.xml` and JUnit/Surefire report summaries
 - [ ] `clean` recognising squash-merged PRs in `pr` mode
 - [ ] Import the remaining personal skills and agents from `~/.claude`

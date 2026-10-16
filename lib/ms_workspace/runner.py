@@ -54,6 +54,10 @@ def run_tests(ws: Workspace, repo: str, directory: Path, level: str, batch: str 
     cmd = ""
     if mods and test_cfg.get("affected"):
         cmd = test_cfg["affected"].replace("{modules}", shlex.quote(",".join(mods)))
+        if "{closure}" in cmd:   # exact dependents from the pom graph, instead of relying on -amd
+            from .modules import closure, load_reactor
+            graph = load_reactor(directory)
+            cmd = cmd.replace("{closure}", shlex.quote(",".join(closure(graph, set(mods)) if graph else mods)))
     cmd = cmd or test_cfg.get("unit") or ""
     if not cmd:
         die(f"no test command configured for '{repo}' in workspace.toml")
@@ -65,7 +69,7 @@ def run_tests(ws: Workspace, repo: str, directory: Path, level: str, batch: str 
         print(f"PASS {level} {repo} (cached: same code and command already passed): {cmd}")
         ws.log(f"test.{level}", "ok", repo, batch, f"cached: {cmd}", key=key, cached=True)
         return 0
-    start = time.time()
+    start = started_at = time.time()
     rc, out = _run_locked(ws, cmd, directory, 1800)
     secs = int(time.time() - start)
     try:
@@ -75,7 +79,16 @@ def run_tests(ws: Workspace, repo: str, directory: Path, level: str, batch: str 
             ws.log(f"test.{level}", "ok", repo, batch, cmd, key=key, secs=secs)
         else:
             print(f"FAIL {level} {repo} ({secs}s): {cmd}", file=sys.stderr)
-            print(_tail(out), file=sys.stderr)
+            from .junit import DEFAULT_GLOBS, format_summary, summarize
+            summary = summarize(directory, started_at - 5, test_cfg.get("reports") or DEFAULT_GLOBS)
+            if summary and (summary["failed"] or summary["errors"]):
+                kept = ws.state_dir / "tests" / f"{repo}-{level}.log"
+                kept.parent.mkdir(parents=True, exist_ok=True)
+                kept.write_text(Path(out).read_text(errors="replace"))
+                print("\n".join(format_summary(summary, 8)), file=sys.stderr)
+                print(f"full output: {kept}", file=sys.stderr)
+            else:
+                print(_tail(out), file=sys.stderr)
             ws.log(f"test.{level}", "fail", repo, batch, cmd, key=key, secs=secs)
     finally:
         os.unlink(out)

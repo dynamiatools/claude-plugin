@@ -55,6 +55,11 @@
             "type": "command",
             "command": "ms-workspace images capture",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "ms-workspace handoff --hook",
+            "timeout": 15
           }
         ]
       }
@@ -66,6 +71,11 @@
             "type": "command",
             "command": "ms-workspace images capture",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "ms-workspace handoff --hook",
+            "timeout": 15
           }
         ]
       }
@@ -78,6 +88,28 @@
             "type": "command",
             "command": "ms-workspace outguard",
             "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ms-workspace handoff --hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ms-workspace notify --hook",
+            "timeout": 15
           }
         ]
       }
@@ -127,7 +159,13 @@
       "Bash(ms-workspace ps tree:*)",
       "Bash(ms-workspace ps find:*)",
       "Bash(ms-workspace ps ports:*)",
-      "Bash(ms-workspace ps leftovers:*)"
+      "Bash(ms-workspace ps leftovers:*)",
+      "Bash(ms-workspace handoff:*)",
+      "Bash(ms-workspace gate:*)",
+      "Bash(ms-workspace junit:*)",
+      "Bash(ms-workspace modules:*)",
+      "Bash(ms-workspace recall:*)",
+      "Bash(ms-workspace release:*)"
     ],
     "ask": [
       "Bash(ms-workspace ship:*)",
@@ -138,7 +176,8 @@
       "Bash(ms-workspace http run:*)",
       "Bash(ms-workspace http bench:*)",
       "Bash(ms-workspace docker clean:*)",
-      "Bash(ms-workspace ps kill:*)"
+      "Bash(ms-workspace ps kill:*)",
+      "Bash(ms-workspace notify:*)"
     ]
   }
 }

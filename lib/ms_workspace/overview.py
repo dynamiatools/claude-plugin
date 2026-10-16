@@ -123,6 +123,12 @@ def cmd_doctor(ws: Workspace | None) -> int:
     ok("claude") if shutil.which("claude") else warn("claude not in PATH")
     ok("tmux") if shutil.which("tmux") else warn("tmux (needed by ms-tmux-session)")
     ok("rtk") if shutil.which("rtk") else warn("rtk (optional: token-optimized shell output)")
+    try:
+        import sqlite3
+        sqlite3.connect(":memory:").execute("create virtual table t using fts5(a)")
+        ok("sqlite FTS5 (needed by recall)")
+    except Exception:
+        warn("this Python's sqlite3 has no FTS5: `ms-workspace recall` will not work")
 
     if ws is not None:
         stacks = sorted({s for r in ws.repo_names() for s in (ws.repo_cfg(r).get("stacks") or [])})

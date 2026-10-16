@@ -43,6 +43,8 @@ def render(ws: Workspace) -> str:
             "Never leave work half done: prefer finishing or cleanly stopping a small step.",
             "- To check an API use `ms-workspace http run <file> --env local` (requests live in `requests/*.http.toml`; assertions and a masked log of every exchange are built in). "
             "Never put tokens in request files: use `{{secret:NAME}}`.",
+            "- `ms-workspace gate` scans what would be sent for secrets and leftovers (ship runs it); `ms-workspace recall <words>` searches past sessions, notes and the log; "
+            "a handoff note is written automatically before compaction and at the end of a session.",
             "- Save durable facts with `ms-workspace memory add --type gotcha|decision|lesson \"...\"` (why, not just what). "
             "If you must stop before finishing (usage critical, interrupted), leave a handoff: "
             "`ms-workspace memory add --type handoff --batch <batch> \"state, next step, files touched\"`.",

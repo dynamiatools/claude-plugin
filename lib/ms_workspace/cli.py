@@ -42,6 +42,13 @@ Usage:
   ms-workspace docker status|logs|stats|disk|health|ports|env|wait|clean   compact Docker views; only `clean --yes` changes anything
   ms-workspace sys [--tools] [--json]        OS, CPU, memory, disk, network in a few lines, with hints when something looks wrong
   ms-workspace ps [tree|find|ports|leftovers|kill]   processes: heavy ones, who holds a port, what was left running, guarded kill
+  ms-workspace gate [batch] [--json]         scan what would be sent for secrets, merge markers, huge files and debug leftovers
+  ms-workspace junit [paths] [--since MIN] [--top N]   summarize JUnit/Surefire/Gradle/vitest/pytest XML reports: failing tests, message, first project frame
+  ms-workspace modules [deps|rdeps <m>|closure|check]   Maven reactor graph: dependents, exact -pl list for a change, cycles, [[arch.rule]] checks
+  ms-workspace recall <words...> [--kind K] [-n N]   full-text search over past sessions, memory notes and the log ("where did we decide X?")
+  ms-workspace handoff [--batch B] [--print] | --hook   write the state needed to resume a batch (a hook does it before compaction and at the end)
+  ms-workspace release status|notes [repo]   what waits to be promoted from the base branch to qa/main, grouped by commit type, and release notes
+  ms-workspace notify <message> [--title T] | --test | --hook   send a notification (ntfy, webhook or local command from [notify]); also a Notification hook
   ms-workspace doctor                        check tools, versions, resources and workspace.toml
   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 
@@ -90,6 +97,21 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd == "outguard":
         from .hooks import cmd_outguard
         return cmd_outguard()
+    if cmd == "notify":
+        from .notify import cmd_notify
+        return cmd_notify(Workspace.load(required=False), args)
+    if cmd == "handoff":
+        from .handoff import cmd_handoff
+        return cmd_handoff(Workspace.load(required=False), args)
+    if cmd == "modules":
+        from .modules import cmd_modules
+        return cmd_modules(Workspace.load(required=False), args)
+    if cmd == "junit":
+        from .junit import cmd_junit
+        return cmd_junit(Workspace.load(required=False), args)
+    if cmd == "gate":
+        from .gate import cmd_gate
+        return cmd_gate(Workspace.load(required=False), args)
     if cmd == "docker":
         from .dockertools import cmd_docker
         return cmd_docker(Workspace.load(required=False), args)
@@ -121,7 +143,7 @@ def _dispatch(cmd: str, args: list[str]) -> int:
         "env": batches.cmd_env, "integrate": batches.cmd_integrate, "ship": batches.cmd_ship,
         "clean": batches.cmd_clean, "undo": batches.cmd_undo, "plan": lambda ws, a: batches.cmd_ship(ws, a[:1]), "test": runner.cmd_test, "log": overview.cmd_log,
         "status": overview.cmd_status, "claude-md": claude_md.cmd_claude_md,
-        "memory": memory.cmd_memory, "insights": insights.cmd_insights, "tokens": tokens.cmd_tokens,
+        "memory": memory.cmd_memory, "release": lambda ws, a: __import__("ms_workspace.release", fromlist=["x"]).cmd_release(ws, a), "recall": lambda ws, a: __import__("ms_workspace.recall", fromlist=["x"]).cmd_recall(ws, a), "insights": insights.cmd_insights, "tokens": tokens.cmd_tokens,
     }
     if cmd not in table:
         print(f"ERROR: unknown command: {cmd}", file=sys.stderr)
