@@ -12,8 +12,7 @@ my-claude/
 ├── bin/             # CLI tools (-> ~/.local/bin/), e.g. ms-workspace
 ├── skills/          # Reusable skills   (-> ~/.claude/skills/)
 ├── agents/          # Custom subagents  (-> ~/.claude/agents/)
-├── CLAUDE.md        # Global instructions (-> ~/.claude/CLAUDE.md) [planned]
-└── RTK.md           # Extra instructions imported from CLAUDE.md   [planned]
+└── CLAUDE.md        # Global instructions (-> ~/.claude/CLAUDE.md)
 ```
 
 ### Skills
@@ -90,6 +89,7 @@ cd ~/IdeaProjects/my-claude
 
 - `./install.sh --dry-run` shows what would change without touching anything.
 - `./install.sh --uninstall` removes only the links that point to this repo.
+- `CLAUDE.md` is linked as your global instructions. If you already have one, it is backed up (see below), and anything it imports such as `@RTK.md` is no longer loaded; the rtk hook keeps working without it.
 - Existing files with the same name are moved to `~/.claude/backups/my-claude-<timestamp>/`, never deleted.
 - Set `CLAUDE_HOME` / `BIN_DIR` to target directories other than `~/.claude` / `~/.local/bin`.
 - It also checks for `git`, `jq`, `tmux`, `gh`, `node` and `claude` and warns about missing ones.
@@ -114,11 +114,11 @@ Start a new Claude Code session afterwards so the skills are picked up.
 ## Roadmap
 
 - [ ] Import existing skills and agents from `~/.claude`
-- [ ] Global `CLAUDE.md` and `RTK.md`
+- [x] Global `CLAUDE.md` (RTK.md is not needed: the rtk hook works without it)
 - [ ] Sanitized `settings.json` template
 - [x] `install.sh` to link everything idempotently
 - [ ] Document required external tools (e.g. `tmux`, `rtk`)
 - [x] `ms-workspace`: batch new, agent new, affected, test t0/t1/t2, integrate, ship, clean, log, context, status, doctor, guard
 - [x] `ms-workspace`: env, per-repo task mode, test-result memo, configurable `[tools]` policy
 - [x] Skills that wrap `ms-workspace` (`ms-batch`, `ms-integrate`, `ms-ship`) and Haiku agents
-- [ ] Portable global `CLAUDE.md` (decision pending)
+- [x] Portable global `CLAUDE.md` (about 380 words, loaded in every session)
