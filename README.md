@@ -50,9 +50,9 @@ Read-only helpers. Three cheap ones run on Haiku so the main model does not spen
 
 **Batch flow** (all local until `ship`):
 
-1. `ms-workspace batch new <batch> [repos]`: one worktree per repo on `int/<batch>`, branched from the base branch.
+1. `ms-workspace batch new <batch> [repos]`: one worktree per repo on `int/<batch>`, branched from the base branch. Gitignored files that a fresh worktree lacks (`.env`, secrets) are copied from the main checkout using the repo's `.worktreeinclude`, `env_files` in `workspace.toml` and `.claude/settings.local.json`; tracked files are never copied. `ms-workspace env [batch] [--setup] [--trust]` repeats that, runs each repo's `setup` command, and marks the worktrees as trusted so background agents skip the trust dialog.
 2. `ms-workspace agent new <batch> <task> [repos]`: an isolated worktree per agent (`agent/<batch>/<task>`), so parallel agents never touch the same files. Optional: a single agent can work directly in the `int/<batch>` worktree.
-3. `ms-workspace test t0`: tests only what changed in the current repo.
+3. `ms-workspace test t0`: tests only what changed in the current repo. A passing run is remembered by a hash of the code (tree, uncommitted changes, in-batch dependencies) and the command, so repeating it on identical code is instant; use `--no-cache` to force a run. The memo does not see dependency or environment changes outside git.
 4. `ms-workspace integrate <batch> [--dry-run]`: merges the agent branches into `int/<batch>` in dependency order, reporting conflicting files. `--dry-run` checks each branch against the current `int/<batch>` only, not against each other.
 5. `ms-workspace test t1 <batch>`: affected modules plus the repo's `critical` modules, for every changed repo.
 6. `ms-workspace ship <batch>`: prints the plan. With `--yes` it merges the moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`). It refuses release branches and never force-pushes.
@@ -116,6 +116,6 @@ Start a new Claude Code session afterwards so the skills are picked up.
 - [x] `install.sh` to link everything idempotently
 - [ ] Document required external tools (e.g. `tmux`, `rtk`)
 - [x] `ms-workspace`: batch new, agent new, affected, test t0/t1/t2, integrate, ship, clean, log, context, status, doctor, guard
-- [ ] `ms-workspace`: env (copy ignored files into worktrees), per-repo task mode, test-result memo by tree hash
+- [x] `ms-workspace`: env, per-repo task mode, test-result memo, configurable `[tools]` policy
 - [x] Skills that wrap `ms-workspace` (`ms-batch`, `ms-integrate`, `ms-ship`) and Haiku agents
-- [ ] Portable global `CLAUDE.md` (decision pending) and a configurable `[tools]` policy in `workspace.toml`
+- [ ] Portable global `CLAUDE.md` (decision pending)

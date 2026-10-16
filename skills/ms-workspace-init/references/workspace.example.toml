@@ -10,6 +10,11 @@ warn_pct = 70                # ask the user to confirm above this % of the 5h/7d
 stop_pct = 90                # stop and confirm above this %
 stale_minutes = 15           # note when the usage snapshot is older than this
 
+[tools]                      # rendered into the workspace CLAUDE.md "Tool preference" section
+discovery = ["idea", "codebase-memory", "grep"]   # ordered; "mcp:<server>" adds any MCP server
+shell = "rtk"                # "rtk" adds the rtk note, anything else omits it
+# notes = "Free text appended to the section."
+
 [repos.core-lib]
 url = "git@github.com:org/core-lib.git"
 base = "next"                # branch where changes are integrated
@@ -18,6 +23,9 @@ stacks = ["maven", "pnpm"]
 deps = []                    # repos this one depends on
 critical = []                # modules always tested in t1/t2 (money, security, ...)
 push = "direct"              # "direct" (push int/<batch> to base) or "pr" (open a PR)
+# tasks = "github"           # overrides the workspace-wide tracking mode for this repo
+# env_files = [".env.local"] # extra ignored files copied into every new worktree (plus .worktreeinclude)
+# setup = "pnpm install --frozen-lockfile"   # run by `ms-workspace env --setup`
 [repos.core-lib.test]
 unit = "mvn -T1C -B test"
 affected = "mvn -T1C -B test -pl {modules} -amd"   # {modules} = changed Maven modules

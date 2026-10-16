@@ -8,7 +8,8 @@
 #   ms-workspace batch new <name> [repo...]    create a batch (one worktree per repo, branch int/<name>)
 #   ms-workspace affected                      JSON: changed repos/modules and their dependents
 #   ms-workspace agent new <batch> <task> [repo...]   isolated worktree per agent (branch agent/<batch>/<task>)
-#   ms-workspace test t0                       test what changed in the current repo
+#   ms-workspace env [batch] [--setup] [--trust]   copy ignored files (.worktreeinclude, env_files) into the batch worktrees
+#   ms-workspace test t0                       test what changed in the current repo (add --no-cache to force a run)
 #   ms-workspace test t1 [batch]               affected + critical modules for every changed repo of the batch
 #   ms-workspace test t2 [batch]               end-to-end command from [e2e] in workspace.toml
 #   ms-workspace integrate <batch> [--dry-run] merge agent branches into int/<batch> (conflicts detected first)
@@ -58,6 +59,7 @@ log_event() { # action status repo batch detail
   mkdir -p "$LOG_DIR"
   if [[ ! -f "$file" ]]; then # first write of the day: rotate old files
     find "$LOG_DIR" -name '*.jsonl' -mtime +"$(cfg '.log_retention_days // 14')" -delete 2>/dev/null || true
+    find "$STATE_DIR/memo" -type f -mtime +"$(cfg '.log_retention_days // 14')" -delete 2>/dev/null || true
   fi
   jq -cn --arg ts "$(date -Is)" --arg action "$1" --arg status "$2" \
         --arg repo "${3:-}" --arg batch "${4:-}" --arg detail "${5:-}" \
@@ -131,8 +133,15 @@ cmd_batch() {
       || { log_event batch.new error "$r" "$name" "worktree add failed"; die "could not create worktree for $r (branch int/$name may exist)"; }
     log_event batch.new ok "$r" "$name" "int/$name from $start"
     echo "  $r -> $dir/$r (int/$name from $start)"
+    copy_env "$r" "$dir/$r"
   done
-  printf '# Batch: %s\n\nRepos: %s\n\n## Tasks\n- [ ] \n' "$name" "${repos[*]}" > "$dir/TASKS.md"
+  {
+    printf '# Batch: %s\n\nRepos: %s\n\n## Tasks\n' "$name" "${repos[*]}"
+    for r in "${repos[@]}"; do
+      if [[ "$(task_mode "$r")" == "github" ]]; then printf -- '- %s: tracked in GitHub issues; list only issue numbers here\n' "$r"
+      else printf -- '- [ ] %s: \n' "$r"; fi
+    done
+  } > "$dir/TASKS.md"
   echo "Batch ready: $dir"
 }
 
@@ -184,6 +193,69 @@ need_batch() { # name -> validates, echoes it
   echo "$1"
 }
 
+# ---------- per-repo options and environment files ----------
+task_mode() { cfg --arg r "$1" '.repos[$r].tasks // $top' --arg top "$(cfg '.tasks // "local"')"; }
+
+# copy_env <repo> <dest-worktree>: copies gitignored files that a fresh worktree lacks.
+# Sources: <repo>/.worktreeinclude (gitignore syntax), repos.<repo>.env_files, .claude/settings.local.json.
+copy_env() {
+  local r="$1" dst="$2" src="$WS_ROOT/$1" f n=0
+  while IFS= read -r f; do
+    [[ -n "$f" && "$f" != /* && "$f" != *..* ]] || continue
+    [[ -f "$src/$f" && ! -e "$dst/$f" ]] || continue
+    git -C "$src" check-ignore -q -- "$f" 2>/dev/null || continue   # never copy tracked files
+    mkdir -p "$dst/$(dirname "$f")" && cp -p "$src/$f" "$dst/$f" && n=$((n+1))
+  done < <({
+    [[ -f "$src/.worktreeinclude" ]] && git -C "$src" ls-files --others --ignored --exclude-from=.worktreeinclude
+    cfg --arg r "$r" '.repos[$r].env_files // [] | .[]'
+    echo ".claude/settings.local.json"
+  } | sort -u)
+  [[ $n -eq 0 ]] || echo "    copied $n ignored file(s) into $(basename "$dst")"
+}
+
+# trust_dir <dir>: mark a directory as trusted so Claude skips the "trust this folder" dialog.
+trust_dir() {
+  local cfgfile="$HOME/.claude.json" tmp
+  [[ -f "$cfgfile" ]] || return 0
+  tmp="$(mktemp)"
+  jq --arg d "$1" '.projects[$d] = ((.projects[$d] // {}) + {"hasTrustDialogAccepted": true})' "$cfgfile" > "$tmp" \
+    && cat "$tmp" > "$cfgfile"
+  rm -f "$tmp"
+}
+
+# worktree_dirs <batch> [repo]: every worktree of the batch (integration and agents), one per line.
+worktree_dirs() {
+  local b="$1" r="${2:-}" rr d
+  while read -r rr; do
+    [[ -z "$r" || "$rr" == "$r" ]] || continue
+    echo "$BATCH_DIR/$b/$rr"
+    for d in "$BATCH_DIR/$b"/.agents/*/"$rr"; do [[ -d "$d" ]] && echo "$d"; done
+  done < <(batch_repos "$b")
+}
+
+cmd_env() {
+  need_ws
+  local batch="" setup=0 trust=0 arg d r cmd
+  for arg in "$@"; do case "$arg" in --setup) setup=1 ;; --trust) trust=1 ;; *) batch="$arg" ;; esac; done
+  batch="$(need_batch "${batch:-$(batch_of_cwd)}")"
+  while IFS= read -r d; do
+    r="$(basename "$d")"
+    echo "  $d"
+    copy_env "$r" "$d"
+    [[ $trust -eq 1 ]] && trust_dir "$d"
+    if [[ $setup -eq 1 ]]; then
+      cmd="$(cfg --arg r "$r" '.repos[$r].setup // empty')"
+      if [[ -n "$cmd" ]]; then
+        echo "    setup: $cmd"
+        (cd "$d" && flock -w 1800 "$STATE_DIR/heavy.lock" bash -c "$cmd") >/dev/null 2>&1 \
+          && log_event env.setup ok "$r" "$batch" "$cmd" \
+          || { log_event env.setup fail "$r" "$batch" "$cmd"; echo "    setup FAILED: $cmd" >&2; }
+      fi
+    fi
+  done < <(worktree_dirs "$batch")
+  log_event env ok "" "$batch" "setup=$setup trust=$trust"
+}
+
 # ---------- test ----------
 # run_tests <repo> <dir> <level>: runs the affected (or full) tests in <dir>; returns the test exit code.
 run_tests() {
@@ -198,10 +270,28 @@ run_tests() {
   if [[ -n "$mods" ]]; then cmd="$(cfg --arg r "$repo" '.repos[$r].test.affected // empty')"; cmd="${cmd//\{modules\}/$mods}"; fi
   [[ -n "$cmd" ]] || cmd="$(cfg --arg r "$repo" '.repos[$r].test.unit // empty')"
   [[ -n "$cmd" ]] || die "no test command configured for '$repo' in workspace.toml"
-  mkdir -p "$STATE_DIR"; out="$(mktemp)"; start=$SECONDS
+  mkdir -p "$STATE_DIR/memo"; out="$(mktemp)"; start=$SECONDS
+  # Skip the run when this exact code (plus its in-batch dependencies) already passed this exact command.
+  local key="" d
+  if [[ -z "${MS_NO_MEMO:-}" ]]; then
+    key="$({
+      cd "$dir"; git rev-parse 'HEAD^{tree}'; git diff HEAD
+      git ls-files -o --exclude-standard -z | xargs -0 -r sha1sum
+      for d in $(cfg --arg r "$repo" '.repos[$r].deps[]?'); do
+        [[ -n "$batch" && -d "$BATCH_DIR/$batch/$d" ]] && git -C "$BATCH_DIR/$batch/$d" rev-parse 'HEAD^{tree}'
+      done
+      echo "$cmd"
+    } | sha1sum | cut -c1-20)"
+    if [[ -f "$STATE_DIR/memo/$repo-$key" ]]; then
+      echo "PASS $level $repo (cached: same code and command already passed): $cmd"
+      log_event "test.$level" ok "$repo" "$batch" "cached: $cmd"
+      rm -f "$out"; return 0
+    fi
+  fi
   # One heavy run at a time per workspace, so parallel agents don't starve the machine.
   (cd "$dir" && flock -w 1800 "$STATE_DIR/heavy.lock" bash -c "$cmd") >"$out" 2>&1 || rc=$?
   if [[ $rc -eq 0 ]]; then
+    [[ -z "$key" ]] || : > "$STATE_DIR/memo/$repo-$key"
     echo "PASS $level $repo ($((SECONDS-start))s): $cmd"
     log_event "test.$level" ok "$repo" "$batch" "$cmd"
   else
@@ -225,6 +315,8 @@ run_e2e() { # batch -> runs [e2e].command
 
 cmd_test() {
   need_ws
+  local args=() a; for a in "$@"; do if [[ "$a" == "--no-cache" ]]; then export MS_NO_MEMO=1; else args+=("$a"); fi; done
+  set -- "${args[@]+"${args[@]}"}"
   local level="${1:-}" batch r wt rc=0
   case "$level" in
     t0)
@@ -258,6 +350,7 @@ cmd_agent() {
       || die "could not create agent worktree for $r (branch agent/$batch/$task may exist)"
     log_event agent.new ok "$r" "$batch" "agent/$batch/$task"
     echo "  $r -> $wt (agent/$batch/$task)"
+    copy_env "$r" "$wt"
   done
 }
 
@@ -484,14 +577,22 @@ Skills: /ms-batch, /ms-integrate, /ms-ship.
 - Delegate code search to \`ms-agent-scout\`, failing-test analysis to \`ms-agent-test-triage\`, summaries and commit drafts to \`ms-agent-summarizer\` (all Haiku).
 
 ## Tool preference
-1. IDE tools (\`mcp__idea__*\`) when available.
-2. codebase-memory graph tools for structure, callers and impact.
-3. Grep/Glob/Read as the fallback; never block on a missing tool.
-Shell output is filtered by \`rtk\` when it is installed.
+EOF
+  cfg '
+    def tool_label: if . == "idea" then "IDE tools (`mcp__idea__*`) when available"
+      elif . == "codebase-memory" then "codebase-memory graph tools for structure, callers and impact"
+      elif . == "grep" then "Grep/Glob/Read (never block on a missing tool)"
+      elif startswith("mcp:") then "`mcp__\(.[4:])__*` tools when available"
+      else . end;
+    ((.tools.discovery // ["idea","codebase-memory","grep"]) | to_entries | map("\(.key+1). \(.value | tool_label)") | join("\n"))
+    + (if (.tools.shell // "rtk") == "rtk" then "\nShell output is filtered by `rtk` when it is installed." else "" end)
+    + (if .tools.notes then "\n" + .tools.notes else "" end)'
+  cat <<EOF
 
 ## Tasks
-Tracking mode: \`$tasks\` (\`local\` = TASKS.md inside each batch; \`github\` = one tracking issue per batch).
+Tracking mode: \`$tasks\` (\`local\` = TASKS.md inside each batch; \`github\` = GitHub issues, one tracking issue per batch). A repo can override it with \`tasks\` in workspace.toml.
 EOF
+  cfg '[.repos | to_entries[] | select(.value.tasks != null and .value.tasks != ($top)) | "- \(.key): \(.value.tasks)"] | if length > 0 then "Per-repo overrides:\n" + join("\n") else empty end' --arg top "$tasks"
   echo "$CM_END"
 }
 
@@ -675,6 +776,7 @@ case "${1:-}" in
   test)      shift; cmd_test "$@" ;;
   log)       shift; cmd_log "$@" ;;
   agent)     shift; cmd_agent "$@" ;;
+  env)       shift; cmd_env "$@" ;;
   integrate) shift; cmd_integrate "$@" ;;
   ship)      shift; cmd_ship "$@" ;;
   clean)     shift; cmd_clean "$@" ;;

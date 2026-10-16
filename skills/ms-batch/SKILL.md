@@ -30,6 +30,8 @@ Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/.batch
    ```
    Each parallel agent costs its own tokens; say so before creating more than two.
 
+   `batch new` and `agent new` already copy the ignored files the repos need (`.env`, secrets). Before launching background agents run `ms-workspace env <batch> --setup --trust` so dependencies are installed and the trust dialog does not block them.
+
 5. **Tell the user how to work in it**: `cd` into the worktree and run `claude`, or `claude --bg` per agent worktree and watch them with `claude agents`. Remind that agents commit locally only and that `/ms-integrate` comes next.
 
 ## Notes
