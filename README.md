@@ -11,7 +11,7 @@ my-claude/
 ├── install.sh       # One-step setup after cloning
 ├── bin/             # CLI tools (-> ~/.local/bin/), e.g. ms-workspace
 ├── skills/          # Reusable skills   (-> ~/.claude/skills/)
-├── agents/          # Custom subagents  (-> ~/.claude/agents/)   [planned]
+├── agents/          # Custom subagents  (-> ~/.claude/agents/)
 ├── CLAUDE.md        # Global instructions (-> ~/.claude/CLAUDE.md) [planned]
 └── RTK.md           # Extra instructions imported from CLAUDE.md   [planned]
 ```
@@ -25,7 +25,20 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 | `/ms-tmux-session` | Starts a tmux session with Claude Code (and Remote Control) in a project folder |
 | `/ms-code-tunnel` | Opens a Cloudflare tunnel to the remote code viewer for the current repo |
 | `/ms-git-status` | Prints a compact, read-only status card of the current git repo |
+| `/ms-batch` | Starts or inspects a local batch of work across repos (isolated worktrees, optional per-agent worktrees) |
+| `/ms-integrate` | Merges agent branches into the batch, detects conflicts, runs the incremental tests |
+| `/ms-ship` | Publishes a validated batch (plan, confirmation, sync, tests, e2e, push). User-invoked only |
 | `/ms-workspace-init` | Builds a multi-repo workspace from scratch (clones repos, detects stacks, writes `workspace.toml`) |
+
+### Agents
+
+Cheap read-only helpers on Haiku, so the main model does not spend tokens on reading and summarizing:
+
+| Agent | Use |
+|---|---|
+| `ms-agent-scout` | Finds where code lives (paths and one-line reasons only) |
+| `ms-agent-test-triage` | Classifies a failing test run (code bug, flaky, environment, config, build) and points to the file |
+| `ms-agent-summarizer` | Condenses diffs, history and logs; drafts commit messages following each repo's convention |
 
 ### Tools
 
@@ -43,7 +56,9 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 6. `ms-workspace ship <batch>`: prints the plan. With `--yes` it merges the moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`). It refuses release branches and never force-pushes.
 7. `ms-workspace clean [<batch>]`: lists batches, or removes a merged one (worktrees and local branches).
 
-Also: `log`, `affected`, `context`, `status [--fetch]`, `doctor` and `guard` (see Hooks).
+Also: `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guard` (see Hooks) and `claude-md`.
+
+**Workspace CLAUDE.md.** `ms-workspace claude-md` (run by `/ms-workspace-init`) generates `<workspace>/CLAUDE.md`: repos in dependency order, agent rules, the batch flow, token and tool guidance. Only the block between the `ms-workspace:begin/end` markers is managed, so your own notes around it survive every regeneration.
 
 `ms-workspace` keeps an action log in `<workspace>/.ms-workspace/logs/YYYY-MM-DD.jsonl` (one JSON line per action, one file per day, old files pruned after `log_retention_days`, default 14). Read it with `ms-workspace log [-n N] [--day D] [--action A]`.
 
@@ -97,5 +112,5 @@ Start a new Claude Code session afterwards so the skills are picked up.
 - [ ] Document required external tools (e.g. `tmux`, `rtk`)
 - [x] `ms-workspace`: batch new, agent new, affected, test t0/t1/t2, integrate, ship, clean, log, context, status, doctor, guard
 - [ ] `ms-workspace`: env (copy ignored files into worktrees), per-repo task mode, test-result memo by tree hash
-- [ ] Skills that wrap `ms-workspace` (`ms-batch`, `ms-integrate`, `ms-ship`)
-- [ ] Haiku-based agents (`ms-scout`, `ms-test-triage`) and a `[tools]` policy in `workspace.toml`
+- [x] Skills that wrap `ms-workspace` (`ms-batch`, `ms-integrate`, `ms-ship`) and Haiku agents
+- [ ] Portable global `CLAUDE.md` (decision pending) and a configurable `[tools]` policy in `workspace.toml`

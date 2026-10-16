@@ -61,14 +61,16 @@ what cannot be detected, and keep every question short.
    - Never invent dependencies or e2e commands; leave `deps: []` / omit `e2e`
      if the user does not know.
 
-7. **Write `<root>/CLAUDE.md`** (workspace-level, loaded automatically by
-   Claude Code from any repo below it). Keep it under ~25 lines:
-   - Repos and their dependency order (from `deps`).
-   - Rule: agents commit locally only; no `git push`, no PR, no new remote
-     branches (integration happens through the batch flow).
-   - Rule: run only the tests of what changed (`workspace.toml` > `repos.<name>.test`).
-   - Rule: do not touch files outside the repos/modules assigned to the task.
-   - Where batches live and how tasks are tracked (`tasks` mode).
+7. **Generate `<root>/CLAUDE.md`** with the tool instead of writing it by hand:
+   ```bash
+   MS_WORKSPACE="<root>" ms-workspace claude-md
+   ```
+   It writes a short managed block (repos in dependency order, agent rules,
+   batch flow, token and tool guidance, tracking mode) between
+   `ms-workspace:begin/end` markers. Anything the user writes outside the
+   markers is preserved, and the command can be re-run after any change to
+   `workspace.toml`. Claude Code loads this file automatically from any repo
+   below the workspace root.
 
 8. **Ignore generated folders**: make sure each repo's `.gitignore` (or
    `.git/info/exclude`, preferred, so nothing is committed) has
