@@ -20,6 +20,7 @@
 #   ms-workspace status [--fetch]              one line per repo: branch, ahead/behind base, dirty, batches
 #   ms-workspace claude-md [--print]           (re)generate <workspace>/CLAUDE.md; only the managed block is touched
 #   ms-workspace usage [--check] [--need PCT] [--json|--line]   plan usage: 5h session and 7d week, pace, verdict
+#   ms-workspace images [list|capture|backfill]   archive images pasted in chat into <workspace>/.ms-workspace/images/
 #   ms-workspace doctor                        check tools, versions, resources and workspace.toml
 #   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 #
@@ -574,6 +575,7 @@ Skills: /ms-batch, /ms-integrate, /ms-ship.
 ## Saving tokens
 - One agent by default; parallel agents only for independent repos or modules.
 - Read \`ms-workspace context\`, \`status\` and \`log\` before exploring the repos.
+- Images pasted in chat are archived under \`.ms-workspace/images/\`; \`ms-workspace images\` lists recent ones (path plus the text sent with them), so you can look at an earlier screenshot with Read instead of asking for it again.
 - Delegate code search to \`ms-agent-scout\`, failing-test analysis to \`ms-agent-test-triage\`, summaries and commit drafts to \`ms-agent-summarizer\` (all Haiku).
 
 ## Tool preference
@@ -702,6 +704,98 @@ cmd_usage() {
   return 0
 }
 
+# ---------- images ----------
+# Claude Code keeps pasted images only inside the session transcript (base64 blocks in user messages).
+# `capture` is a Stop/SessionEnd hook: it reads only the new part of the transcript and saves each image as a file.
+IMG_DIR() { echo "$WS_ROOT/.ms-workspace/images"; }
+
+# extract_images <transcript> <session-id>: saves new pasted images; echoes how many were saved.
+extract_images() {
+  local tf="$1" sid="$2" dir statef off=0 size chunk usable partial rec n i mt ext ts day tm file hash saved=0 text cwd
+  dir="$(IMG_DIR)"; statef="$dir/.state/$sid"
+  mkdir -p "$dir/.state"
+  [[ -f "$statef" ]] && off="$(<"$statef")"
+  size="$(stat -c %s "$tf")"
+  [[ "$off" -le "$size" ]] || off=0
+  [[ "$off" -lt "$size" ]] || { echo 0; return 0; }
+  chunk="$(mktemp)"; tail -c +$((off+1)) "$tf" > "$chunk"
+  usable="$(stat -c %s "$chunk")"
+  if [[ -n "$(tail -c1 "$chunk")" ]]; then # last line still being written: leave it for next time
+    partial="$(tail -n1 "$chunk" | wc -c)"; usable=$((usable - partial))
+  fi
+  while IFS= read -r rec; do
+    n="$(jq '.imgs | length' <<<"$rec")"
+    ts="$(jq -r '.ts' <<<"$rec")"; cwd="$(jq -r '.cwd // ""' <<<"$rec")"; text="$(jq -r '.text' <<<"$rec")"
+    day="$(date -d "$ts" +%F 2>/dev/null || echo "${ts:0:10}")"; tm="$(date -d "$ts" +%H%M%S 2>/dev/null || echo 000000)"
+    for ((i=0; i<n; i++)); do
+      mt="$(jq -r ".imgs[$i].mt" <<<"$rec")"; ext="${mt#image/}"
+      case "$ext" in jpeg) ext=jpg ;; png|jpg|gif|webp) ;; *) ext=bin ;; esac
+      mkdir -p "$dir/$day"; file="$dir/$day/${tm}_${sid:0:8}_$((i+1)).$ext"
+      jq -r ".imgs[$i].data" <<<"$rec" | base64 -d > "$file" 2>/dev/null || { rm -f "$file"; continue; }
+      hash="$(sha1sum "$file" | cut -c1-40)"
+      if [[ -f "$dir/index.jsonl" ]] && grep -qF "\"sha\":\"$hash\"" "$dir/index.jsonl"; then rm -f "$file"; continue; fi
+      jq -cn --arg ts "$ts" --arg sid "$sid" --arg file "${file#"$WS_ROOT"/}" --arg mt "$mt" --arg sha "$hash" \
+            --argjson bytes "$(stat -c %s "$file")" --arg cwd "$cwd" --arg text "$text" \
+        '{ts:$ts,session:$sid,file:$file,media_type:$mt,sha:$sha,bytes:$bytes,cwd:$cwd,text:$text}' >> "$dir/index.jsonl"
+      saved=$((saved+1))
+    done
+  done < <(head -c "$usable" "$chunk" | jq -cR 'fromjson? | select(.message.role == "user" and (.message.content | type) == "array")
+      | {ts: .timestamp, cwd: .cwd, text: ([.message.content[] | select(.type == "text") | .text] | join(" ") | gsub("\\s+"; " ") | .[0:140]),
+         imgs: [.message.content[] | select(.type == "image") | {mt: .source.media_type, data: .source.data}]}
+      | select(.imgs | length > 0)')
+  echo $((off + usable)) > "$statef"
+  rm -f "$chunk"
+  echo "$saved"
+}
+
+images_prune() { # once a day: drop old files and stale index lines
+  local dir marker keep tmp; dir="$(IMG_DIR)"; marker="$dir/.state/.pruned"
+  [[ -z "$(find "$marker" -mmin -1440 2>/dev/null)" ]] || return 0
+  mkdir -p "$dir/.state"; : > "$marker"; keep="$(cfg '.images_retention_days // 30')"
+  find "$dir" -type f ! -name 'index.jsonl' ! -path '*/.state/*' -mtime +"$keep" -delete 2>/dev/null || true
+  find "$dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  [[ -f "$dir/index.jsonl" ]] || return 0
+  tmp="$(mktemp)"
+  while IFS= read -r l; do [[ -f "$WS_ROOT/$(jq -r .file <<<"$l")" ]] && echo "$l"; done < "$dir/index.jsonl" > "$tmp"
+  cat "$tmp" > "$dir/index.jsonl"; rm -f "$tmp"
+}
+
+cmd_images() {
+  local sub="${1:-list}"; [[ $# -gt 0 ]] && shift
+  case "$sub" in
+    capture) # hook: JSON on stdin; never fails the session
+      local input tp cwd sid n
+      input="$(cat)"
+      tp="$(jq -r '.transcript_path // empty' <<<"$input" 2>/dev/null)"; cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
+      sid="$(jq -r '.session_id // empty' <<<"$input" 2>/dev/null)"
+      [[ -n "$tp" && -f "$tp" && -n "$sid" ]] || exit 0
+      [[ -n "$cwd" && -d "$cwd" ]] && cd "$cwd"
+      load_ws 2>/dev/null || exit 0
+      n="$(extract_images "$tp" "$sid" 2>/dev/null || echo 0)"
+      [[ "${n:-0}" -gt 0 ]] && log_event images ok "" "" "saved $n from session ${sid:0:8}"
+      images_prune 2>/dev/null || true
+      exit 0 ;;
+    backfill) # scan existing transcripts whose cwd is inside this workspace
+      need_ws
+      local f sid c total=0 n
+      for f in "$HOME"/.claude/projects/*/*.jsonl; do
+        [[ -f "$f" ]] || continue
+        c="$(head -n 20 "$f" | jq -r 'select(.cwd != null) | .cwd' 2>/dev/null | head -n1)"
+        case "$c/" in "$WS_ROOT"/*) ;; *) continue ;; esac
+        sid="$(basename "$f" .jsonl)"; n="$(extract_images "$f" "$sid")"; total=$((total + n))
+      done
+      echo "Saved $total image(s) into $(IMG_DIR)"; log_event images ok "" "" "backfill saved $total" ;;
+    list)
+      need_ws
+      local n=10 day="" arg
+      while [[ $# -gt 0 ]]; do case "$1" in -n) n="$2"; shift 2 ;; --day) day="$2"; shift 2 ;; *) die "images list: unknown option $1" ;; esac; done
+      [[ -f "$(IMG_DIR)/index.jsonl" ]] || { echo "(no images archived yet)"; return 0; }
+      jq -r --arg day "$day" --arg root "$WS_ROOT" 'select($day == "" or (.file | contains("/\($day)/")))
+        | "\(.ts[0:19]) \($root)/\(.file) (\(.bytes/1024|floor)KB)" + (if .text != "" then " - \(.text | gsub("\\s+"; " "))" else "" end)' "$(IMG_DIR)/index.jsonl" | tail -n "$n" ;;
+    *) die "usage: images [list [-n N] [--day D] | capture | backfill]" ;;
+  esac
+}
+
 # ---------- doctor ----------
 cmd_doctor() {
   load_ws || echo "(no workspace.toml here: checking general tools only)"
@@ -770,6 +864,7 @@ case "${1:-}" in
   context)   shift; cmd_context ;;
   claude-md) shift; cmd_claude_md "$@" ;;
   usage)     shift; cmd_usage "$@" ;;
+  images)    shift; cmd_images "$@" ;;
   doctor)    shift; cmd_doctor ;;
   batch)     shift; cmd_batch "$@" ;;
   affected)  shift; cmd_affected "$@" ;;

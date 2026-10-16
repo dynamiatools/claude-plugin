@@ -4,6 +4,7 @@ name = "example"
 root = "~/IdeaProjects/example"
 tasks = "local"              # "local" (TASKS.md per batch) or "github" (one issue per batch)
 log_retention_days = 14      # daily action logs older than this are deleted
+images_retention_days = 30   # archived chat images older than this are deleted
 
 [usage]                     # plan-usage guard (see `ms-workspace usage`)
 warn_pct = 70                # ask the user to confirm above this % of the 5h/7d window

@@ -60,7 +60,9 @@ Read-only helpers. Three cheap ones run on Haiku so the main model does not spen
 
 **Plan usage.** Claude Code only exposes session (5h) and weekly (7d) usage to the status line, so `ms-statusline` stores a snapshot and `ms-workspace usage` reads it: percent used and left, time to reset, pace, projection and a verdict (`ok`/`warn`/`critical`, thresholds `[usage]` in `workspace.toml`, default 70/90). `usage --check` exits 0/1/2 (3 = no data) so skills and agents can ask for confirmation before starting; `--need <pct>` checks that a planned task fits. Pace and projections are linear and only influence the verdict above 50 % used. Data refreshes while a session is running, and is empty until the first reply of a session.
 
-Also: `usage`, `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guard` (see Hooks) and `claude-md`.
+**Pasted images.** Claude Code does not save images pasted in chat as files; they exist only as base64 inside the session transcript. `ms-workspace images capture` (a Stop/SessionEnd hook) reads just the new part of the transcript and saves each image to `<workspace>/.ms-workspace/images/YYYY-MM-DD/HHMMSS_<session>_<n>.<ext>`, with an `index.jsonl` (time, session, directory, and the text sent with the image). Duplicates are skipped by hash, images only land in the workspace that contains the session's directory, and files older than `images_retention_days` (default 30) are pruned. `ms-workspace images [list -n N --day D]` shows recent ones and `images backfill` imports past sessions. Images may contain sensitive data: they stay local, outside any repo.
+
+Also: `images`, `usage`, `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guard` (see Hooks) and `claude-md`.
 
 **Workspace CLAUDE.md.** `ms-workspace claude-md` (run by `/ms-workspace-init`) generates `<workspace>/CLAUDE.md`: repos in dependency order, agent rules, the batch flow, token and tool guidance. Only the block between the `ms-workspace:begin/end` markers is managed, so your own notes around it survive every regeneration.
 
@@ -71,6 +73,7 @@ Also: `usage`, `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guar
 `install.sh` never edits your `settings.json`. To enable the hooks, merge `settings/hooks.example.json` into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 
 - `ms-workspace guard` (PreToolUse on Bash) blocks `git push`, `gh pr create|merge` and `ms-workspace ship|clean` **only inside batch worktrees**, so agents commit locally and a human integrates. Blocked attempts are logged.
+- `ms-workspace images capture` (Stop and SessionEnd) archives images pasted in chat; see below.
 - `ms-statusline` (as `statusLine`) shows usage in the footer and feeds `ms-workspace usage`.
 - `ms-workspace context` (SessionStart) injects a ~15-line briefing (active batches, open tasks, plan usage, last actions) so the agent does not have to explore. It prints nothing outside a workspace.
 - The `permissions.allow` entry avoids a prompt on every `ms-workspace` call.
