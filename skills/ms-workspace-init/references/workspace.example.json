@@ -1,0 +1,27 @@
+{
+  "name": "example",
+  "root": "~/IdeaProjects/example",
+  "tasks": "local",
+  "repos": {
+    "core-lib": {
+      "url": "git@github.com:org/core-lib.git",
+      "base": "next",
+      "release": [],
+      "stacks": ["maven", "pnpm"],
+      "deps": [],
+      "test": { "unit": "mvn -T1C -B test", "affected": "mvn -T1C -B test -pl {modules} -amd" }
+    },
+    "erp": {
+      "url": "git@github.com:org/erp.git",
+      "base": "next",
+      "release": ["qa", "main"],
+      "stacks": ["maven"],
+      "deps": ["core-lib"],
+      "test": { "unit": "mvn -T1C -B test", "affected": "mvn -T1C -B test -pl {modules} -amd" }
+    }
+  },
+  "e2e": {
+    "command": "docker compose -f e2e/docker-compose.yml up --abort-on-container-exit",
+    "repo": "erp"
+  }
+}
