@@ -1,36 +1,39 @@
 #!/usr/bin/env bash
 # ms-workspace: mechanical helper for the multi-repo batch workflow.
-# Reads <workspace>/workspace.json (created by the ms-workspace-init skill).
+# Reads <workspace>/workspace.toml (created by the ms-workspace-init skill).
 # Deterministic on purpose: skills and hooks call it so the model does not
 # have to spend tokens on git/test plumbing.
 #
 # Usage:
-#   ms-workspace lote nuevo <name> [repo...]   create a batch (one worktree per repo, branch int/<name>)
-#   ms-workspace afectados                     JSON: changed repos/modules and their dependents
+#   ms-workspace batch new <name> [repo...]    create a batch (one worktree per repo, branch int/<name>)
+#   ms-workspace affected                      JSON: changed repos/modules and their dependents
 #   ms-workspace test t0                       test what changed in the current repo
 #   ms-workspace log [-n N] [--day YYYY-MM-DD] [--action A]   show recent actions
 #
-# Workspace discovery: $MS_WORKSPACE, else the nearest parent holding workspace.json.
+# Workspace discovery: $MS_WORKSPACE, else the nearest parent holding workspace.toml.
 set -euo pipefail
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 command -v jq >/dev/null || die "jq is required"
+command -v python3 >/dev/null || die "python3 (>= 3.11, for tomllib) is required"
 
 find_ws() {
   local d="${MS_WORKSPACE:-$PWD}"
   while [[ "$d" != "/" ]]; do
-    [[ -f "$d/workspace.json" ]] && { echo "$d"; return 0; }
+    [[ -f "$d/workspace.toml" ]] && { echo "$d"; return 0; }
     d="$(dirname "$d")"
   done
   return 1
 }
-WS_ROOT="$(find_ws)" || die "no workspace.json found (run the ms-workspace-init skill first)"
-CFG="$WS_ROOT/workspace.json"
+WS_ROOT="$(find_ws)" || die "no workspace.toml found (run the ms-workspace-init skill first)"
+CFG="$WS_ROOT/workspace.toml"
+CFG_JSON="$(python3 -c 'import sys,json,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))))' "$CFG")" \
+  || die "could not parse $CFG (needs Python >= 3.11)"
 STATE_DIR="$WS_ROOT/.ms-workspace"
 LOG_DIR="$STATE_DIR/logs"
 BATCH_DIR="$WS_ROOT/.batches"
 
-cfg() { jq -r "$@" "$CFG"; }
+cfg() { jq -r "$@" <<<"$CFG_JSON"; }
 
 # ---------- logging: one JSON line per action, one file per day ----------
 log_event() { # action status repo batch detail
@@ -92,10 +95,10 @@ modules_of() { # reads file list on stdin, run from repo top
   done | sort -u
 }
 
-# ---------- lote nuevo ----------
-cmd_lote() {
-  [[ "${1:-}" == "nuevo" ]] || die "usage: lote nuevo <name> [repo...]"; shift
-  local name="${1:?lote nuevo <name> [repo...]}"; shift
+# ---------- batch new ----------
+cmd_batch() {
+  [[ "${1:-}" == "new" ]] || die "usage: batch new <name> [repo...]"; shift
+  local name="${1:?batch new <name> [repo...]}"; shift
   local repos=("$@"); [[ ${#repos[@]} -gt 0 ]] || mapfile -t repos < <(repo_names)
   local dir="$BATCH_DIR/$name"
   [[ ! -e "$dir" ]] || die "batch '$name' already exists at $dir"
@@ -103,20 +106,20 @@ cmd_lote() {
   local r base src start
   for r in "${repos[@]}"; do
     src="$WS_ROOT/$r"; base="$(repo_base "$r")"
-    if [[ ! -d "$src/.git" ]]; then log_event lote.nuevo error "$r" "$name" "repo not found at $src"; die "repo '$r' not found at $src"; fi
+    if [[ ! -d "$src/.git" ]]; then log_event batch.new error "$r" "$name" "repo not found at $src"; die "repo '$r' not found at $src"; fi
     git -C "$src" fetch origin "$base" --quiet 2>/dev/null || echo "warn: could not fetch $r/$base (using local ref)" >&2
     start="origin/$base"; git -C "$src" rev-parse --verify --quiet "$start" >/dev/null || start="$base"
     git -C "$src" worktree add --no-track -b "int/$name" "$dir/$r" "$start" >/dev/null 2>&1 \
-      || { log_event lote.nuevo error "$r" "$name" "worktree add failed"; die "could not create worktree for $r (branch int/$name may exist)"; }
-    log_event lote.nuevo ok "$r" "$name" "int/$name from $start"
+      || { log_event batch.new error "$r" "$name" "worktree add failed"; die "could not create worktree for $r (branch int/$name may exist)"; }
+    log_event batch.new ok "$r" "$name" "int/$name from $start"
     echo "  $r -> $dir/$r (int/$name from $start)"
   done
   printf '# Batch: %s\n\nRepos: %s\n\n## Tasks\n- [ ] \n' "$name" "${repos[*]}" > "$dir/TASKS.md"
   echo "Batch ready: $dir"
 }
 
-# ---------- afectados ----------
-cmd_afectados() {
+# ---------- affected ----------
+cmd_affected() {
   local top repo base files mods
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run inside a repo or batch worktree"
   repo="$(basename "$top")"; base="$(repo_base "$repo")"
@@ -142,7 +145,7 @@ cmd_test() {
   mods="$(changed_files "$base" | modules_of | paste -sd, -)"
   if [[ -n "$mods" ]]; then cmd="$(cfg --arg r "$repo" '.repos[$r].test.affected // empty')"; cmd="${cmd//\{modules\}/$mods}"; fi
   [[ -n "${cmd:-}" ]] || cmd="$(cfg --arg r "$repo" '.repos[$r].test.unit // empty')"
-  [[ -n "$cmd" ]] || die "no test command configured for '$repo' in workspace.json"
+  [[ -n "$cmd" ]] || die "no test command configured for '$repo' in workspace.toml"
   mkdir -p "$STATE_DIR"; out="$(mktemp)"; start=$SECONDS; rc=0
   # One heavy run at a time per workspace, so parallel agents don't starve the machine.
   flock -w 1800 "$STATE_DIR/heavy.lock" bash -c "$cmd" >"$out" 2>&1 || rc=$?
@@ -157,11 +160,11 @@ cmd_test() {
 }
 
 case "${1:-}" in
-  lote)      shift; cmd_lote "$@" ;;
-  afectados) shift; cmd_afectados "$@" ;;
+  batch)     shift; cmd_batch "$@" ;;
+  affected)  shift; cmd_affected "$@" ;;
   test)      shift; cmd_test "$@" ;;
   log)       shift; cmd_log "$@" ;;
-  integrar|ship|limpiar) die "'$1' is not implemented yet" ;;
+  integrate|ship|clean) die "'$1' is not implemented yet" ;;
   ""|-h|--help) sed -n '2,14p' "${BASH_SOURCE[0]}" ;;
   *) die "unknown command: $1" ;;
 esac

@@ -1,12 +1,12 @@
 ---
 name: ms-workspace-init
-description: Creates (or updates) a multi-repo workspace from scratch. Asks which repos to include, clones the missing ones, detects each repo's stack and base branch, asks for dependencies, e2e and release branches, then writes workspace.json and a short workspace-level CLAUDE.md. Use when the user wants to set up a new workspace, add a repo to an existing one, or bootstrap a new machine with its repos.
+description: Creates (or updates) a multi-repo workspace from scratch. Asks which repos to include, clones the missing ones, detects each repo's stack and base branch, asks for dependencies, e2e and release branches, then writes workspace.toml and a short workspace-level CLAUDE.md. Use when the user wants to set up a new workspace, add a repo to an existing one, or bootstrap a new machine with its repos.
 ---
 
 # ms-workspace-init
 
 Builds a **workspace**: a folder with several related git repos plus a
-`workspace.json` that the rest of the `ms-*` workflow reads (batches,
+`workspace.toml` that the rest of the `ms-*` workflow reads (batches,
 integration, shipping). It works from zero: no folder, no repos, no config.
 
 Token rule: do the mechanical work with the bundled script, ask the user only
@@ -15,7 +15,7 @@ what cannot be detected, and keep every question short.
 ## Steps
 
 1. **Check for an existing workspace.** If the user gave a folder (or the cwd
-   contains `workspace.json`), read it and switch to *update mode*: only add or
+   contains `workspace.toml`), read it and switch to *update mode*: only add or
    change what the user asks for. Otherwise continue to *new workspace*.
 
 2. **Ask for the basics** in a single `AskUserQuestion` round when possible:
@@ -52,8 +52,8 @@ what cannot be detected, and keep every question short.
    - **e2e**: the command and the repo that owns it, or "none yet".
    - Whether the base branch accepts direct push (default: yes).
 
-6. **Write `<root>/workspace.json`** following
-   `~/.claude/skills/ms-workspace-init/references/workspace.example.json`.
+6. **Write `<root>/workspace.toml`** following
+   `~/.claude/skills/ms-workspace-init/references/workspace.example.toml`.
    - Keep `root` as `~/...` so the file works on another machine.
    - For stacks with module-level selection, set `test.affected` (Maven:
      `-pl {modules} -amd`; pnpm: `pnpm --filter "...[origin/<base>]" test`).
@@ -66,7 +66,7 @@ what cannot be detected, and keep every question short.
    - Repos and their dependency order (from `deps`).
    - Rule: agents commit locally only; no `git push`, no PR, no new remote
      branches (integration happens through the batch flow).
-   - Rule: run only the tests of what changed (`workspace.json` > `test`).
+   - Rule: run only the tests of what changed (`workspace.toml` > `repos.<name>.test`).
    - Rule: do not touch files outside the repos/modules assigned to the task.
    - Where batches live and how tasks are tracked (`tasks` mode).
 
@@ -74,7 +74,7 @@ what cannot be detected, and keep every question short.
    `.git/info/exclude`, preferred, so nothing is committed) has
    `.claude/worktrees/`.
 
-9. **Report**: path of `workspace.json`, the dependency order, what was
+9. **Report**: path of `workspace.toml`, the dependency order, what was
    cloned, and what was left blank (so the user knows what to fill in later).
 
 ## Notes

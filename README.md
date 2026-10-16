@@ -25,13 +25,13 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 | `/ms-tmux-session` | Starts a tmux session with Claude Code (and Remote Control) in a project folder |
 | `/ms-code-tunnel` | Opens a Cloudflare tunnel to the remote code viewer for the current repo |
 | `/ms-git-status` | Prints a compact, read-only status card of the current git repo |
-| `/ms-workspace-init` | Builds a multi-repo workspace from scratch (clones repos, detects stacks, writes `workspace.json`) |
+| `/ms-workspace-init` | Builds a multi-repo workspace from scratch (clones repos, detects stacks, writes `workspace.toml`) |
 
 ### Tools
 
 | Tool | What it does |
 |---|---|
-| `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. Implemented so far: `lote nuevo`, `afectados`, `test t0`, `log` |
+| `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. Implemented so far: `batch new`, `affected`, `test t0`, `log` |
 
 `ms-workspace` keeps an action log in `<workspace>/.ms-workspace/logs/YYYY-MM-DD.jsonl` (one JSON line per action, one file per day, old files pruned after `log_retention_days`, default 14). Read it with `ms-workspace log [-n N] [--day D] [--action A]`.
 

@@ -1,0 +1,30 @@
+# workspace.toml - read by ms-workspace and the ms-* skills.
+# Paths use "~" so the same file works on any machine.
+name = "example"
+root = "~/IdeaProjects/example"
+tasks = "local"              # "local" (TASKS.md per batch) or "github" (one issue per batch)
+log_retention_days = 14      # daily action logs older than this are deleted
+
+[repos.core-lib]
+url = "git@github.com:org/core-lib.git"
+base = "next"                # branch where changes are integrated
+release = []                 # branches that go to qa/production
+stacks = ["maven", "pnpm"]
+deps = []                    # repos this one depends on
+[repos.core-lib.test]
+unit = "mvn -T1C -B test"
+affected = "mvn -T1C -B test -pl {modules} -amd"   # {modules} = changed Maven modules
+
+[repos.erp]
+url = "git@github.com:org/erp.git"
+base = "next"
+release = ["qa", "main"]
+stacks = ["maven"]
+deps = ["core-lib"]
+[repos.erp.test]
+unit = "mvn -T1C -B test"
+affected = "mvn -T1C -B test -pl {modules} -amd"
+
+[e2e]
+command = "docker compose -f e2e/docker-compose.yml up --abort-on-container-exit"
+repo = "erp"
