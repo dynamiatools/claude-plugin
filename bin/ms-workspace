@@ -9,6 +9,10 @@
 #   ms-workspace affected                      JSON: changed repos/modules and their dependents
 #   ms-workspace test t0                       test what changed in the current repo
 #   ms-workspace log [-n N] [--day YYYY-MM-DD] [--action A]   show recent actions
+#   ms-workspace context                       ~15-line briefing (for a SessionStart hook)
+#   ms-workspace status [--fetch]              one line per repo: branch, ahead/behind base, dirty, batches
+#   ms-workspace doctor                        check tools, versions, resources and workspace.toml
+#   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 #
 # Workspace discovery: $MS_WORKSPACE, else the nearest parent holding workspace.toml.
 set -euo pipefail
@@ -25,13 +29,17 @@ find_ws() {
   done
   return 1
 }
-WS_ROOT="$(find_ws)" || die "no workspace.toml found (run the ms-workspace-init skill first)"
-CFG="$WS_ROOT/workspace.toml"
-CFG_JSON="$(python3 -c 'import sys,json,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))))' "$CFG")" \
-  || die "could not parse $CFG (needs Python >= 3.11)"
-STATE_DIR="$WS_ROOT/.ms-workspace"
-LOG_DIR="$STATE_DIR/logs"
-BATCH_DIR="$WS_ROOT/.batches"
+# Load the workspace config into globals. Returns 1 when none is found.
+load_ws() {
+  WS_ROOT="$(find_ws)" || return 1
+  CFG="$WS_ROOT/workspace.toml"
+  CFG_JSON="$(python3 -c 'import sys,json,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))))' "$CFG")" \
+    || die "could not parse $CFG (needs Python >= 3.11)"
+  STATE_DIR="$WS_ROOT/.ms-workspace"
+  LOG_DIR="$STATE_DIR/logs"
+  BATCH_DIR="$WS_ROOT/.batches"
+}
+need_ws() { load_ws || die "no workspace.toml found (run the ms-workspace-init skill first)"; }
 
 cfg() { jq -r "$@" <<<"$CFG_JSON"; }
 
@@ -49,6 +57,7 @@ log_event() { # action status repo batch detail
 }
 
 cmd_log() {
+  need_ws
   local n=20 day="" action=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -97,6 +106,7 @@ modules_of() { # reads file list on stdin, run from repo top
 
 # ---------- batch new ----------
 cmd_batch() {
+  need_ws
   [[ "${1:-}" == "new" ]] || die "usage: batch new <name> [repo...]"; shift
   local name="${1:?batch new <name> [repo...]}"; shift
   local repos=("$@"); [[ ${#repos[@]} -gt 0 ]] || mapfile -t repos < <(repo_names)
@@ -120,6 +130,7 @@ cmd_batch() {
 
 # ---------- affected ----------
 cmd_affected() {
+  need_ws
   local top repo base files mods
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run inside a repo or batch worktree"
   repo="$(basename "$top")"; base="$(repo_base "$repo")"
@@ -136,6 +147,7 @@ cmd_affected() {
 
 # ---------- test ----------
 cmd_test() {
+  need_ws
   local level="${1:-}"
   [[ "$level" == "t0" ]] || die "only 't0' is implemented so far"
   local top repo base mods cmd start rc out
@@ -159,12 +171,126 @@ cmd_test() {
   rm -f "$out"; return $rc
 }
 
+# ---------- guard (PreToolUse hook) ----------
+# Reads the hook JSON on stdin. Exit 2 (with a reason on stderr) blocks the call.
+# Only acts inside a batch worktree; humans pushing from normal checkouts are untouched.
+cmd_guard() {
+  local input cwd command
+  input="$(cat)"
+  command="$(jq -r '.tool_input.command // empty' <<<"$input" 2>/dev/null)" || exit 0
+  [[ -n "$command" ]] || exit 0
+  cwd="$(jq -r '.cwd // empty' <<<"$input" 2>/dev/null)"
+  [[ -n "$cwd" && -d "$cwd" ]] && cd "$cwd"
+  load_ws || exit 0
+  case "$PWD/" in "$BATCH_DIR"/*) ;; *) exit 0 ;; esac
+  if grep -Eq '\bgit\b([[:space:]]+(-C|-c)[[:space:]]+[^[:space:]]+|[[:space:]]+--[^[:space:]]+)*[[:space:]]+push\b|\bgh[[:space:]]+pr[[:space:]]+(create|merge)\b' <<<"$command"; then
+    log_event guard blocked "" "" "$command"
+    echo "Blocked: agents in a batch worktree must not push or open/merge PRs. Commit locally; the human integrates with 'ms-workspace ship'." >&2
+    exit 2
+  fi
+  exit 0
+}
+
+# ---------- status ----------
+cmd_status() {
+  need_ws
+  local fetch=0; [[ "${1:-}" == "--fetch" ]] && fetch=1
+  local r dir base br ahead behind dirty batches
+  while read -r r; do
+    dir="$WS_ROOT/$r"
+    if [[ ! -d "$dir/.git" ]]; then echo "$r: (not cloned)"; continue; fi
+    base="$(repo_base "$r")"
+    [[ $fetch -eq 1 ]] && git -C "$dir" fetch origin "$base" --quiet 2>/dev/null || true
+    br="$(git -C "$dir" branch --show-current)"
+    read -r behind ahead < <(git -C "$dir" rev-list --left-right --count "origin/$base...HEAD" 2>/dev/null || echo "? ?")
+    dirty="$(git -C "$dir" status --porcelain | grep -c . || true)"
+    batches="$(ls -d "$BATCH_DIR"/*/"$r" 2>/dev/null | awk -F/ '{print $(NF-1)}' | paste -sd, -)"
+    echo "$r: $br | vs $base: +$ahead/-$behind | dirty $dirty${batches:+ | batches: $batches}"
+  done < <(repo_names)
+}
+
+# ---------- context ----------
+cmd_context() {
+  load_ws || exit 0
+  local b name n open
+  echo "Workspace '$(cfg '.name // "unnamed"')' at $WS_ROOT ($(repo_names | wc -l) repos). Tool: ms-workspace (log, status, affected, test t0)."
+  if [[ -d "$BATCH_DIR" ]] && ls -d "$BATCH_DIR"/*/ >/dev/null 2>&1; then
+    echo "Active batches:"
+    for b in "$BATCH_DIR"/*/; do
+      name="$(basename "$b")"
+      open="$(grep -c '^- \[ \]' "$b/TASKS.md" 2>/dev/null || true)"
+      echo "  - $name: repos $(ls "$b" | grep -v TASKS.md | paste -sd, -), open tasks: ${open:-0}"
+    done
+  else
+    echo "Active batches: none"
+  fi
+  echo "Recent actions:"
+  cmd_log -n 5 | sed 's/^/  /'
+}
+
+# ---------- doctor ----------
+cmd_doctor() {
+  load_ws || echo "(no workspace.toml here: checking general tools only)"
+  local bad=0
+  ok()   { printf '  ok       %s\n' "$*"; }
+  miss() { printf '  MISSING  %s\n' "$*"; bad=1; }
+  warn() { printf '  warn     %s\n' "$*"; }
+  have() { command -v "$1" >/dev/null 2>&1; }
+  want() { if have "$1"; then ok "$1"; else miss "$1${2:+ ($2)}"; fi; }
+
+  echo "Tools:"
+  for t in git jq python3 gh; do want "$t"; done
+  python3 -c 'import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)' 2>/dev/null \
+    && ok "python >= 3.11" || miss "python >= 3.11 (tomllib)"
+  have claude && ok claude || warn "claude not in PATH"
+  have tmux && ok tmux || warn "tmux (needed by ms-tmux-session)"
+  have rtk && ok rtk || warn "rtk (optional: token-optimized shell output)"
+
+  if [[ -n "${CFG_JSON:-}" ]]; then
+    local stacks; stacks="$(cfg '[.repos[].stacks[]?] | unique | join(" ")')"
+    echo "Stack tools (from workspace.toml: ${stacks:-none}):"
+    [[ " $stacks " == *" maven "* ]]  && { want mvn; want java; have java && ok "$(java -version 2>&1 | head -1)"; }
+    [[ " $stacks " == *" gradle "* ]] && want java
+    [[ " $stacks " == *" pnpm "* ]]   && { want node; want pnpm; }
+    [[ " $stacks " == *" npm "* ]]    && want node
+    [[ " $stacks " == *" go "* ]]     && want go
+    [[ " $stacks " == *" rust "* ]]   && want cargo
+    [[ -n "$(cfg '.e2e.command // empty')" || -n "$(find "$WS_ROOT" -maxdepth 2 -name 'docker-compose*.yml' 2>/dev/null | head -1)" ]] && want docker
+
+    echo "Workspace:"
+    local r base d
+    while read -r r; do
+      if [[ ! -d "$WS_ROOT/$r/.git" ]]; then miss "repo '$r' not cloned at $WS_ROOT/$r"; continue; fi
+      base="$(repo_base "$r")"
+      git -C "$WS_ROOT/$r" rev-parse --verify --quiet "origin/$base" >/dev/null \
+        || git -C "$WS_ROOT/$r" rev-parse --verify --quiet "$base" >/dev/null \
+        || miss "repo '$r': base branch '$base' not found"
+      for d in $(cfg --arg r "$r" '.repos[$r].deps[]?'); do
+        cfg --arg d "$d" '.repos | has($d)' | grep -q true || miss "repo '$r' depends on unknown repo '$d'"
+      done
+    done < <(repo_names)
+    [[ $bad -eq 0 ]] && ok "all repos present, bases and deps valid"
+  fi
+
+  echo "Resources:"
+  local ram disk
+  ram="$(free -g 2>/dev/null | awk '/^Mem:/{print $7}')"; disk="$(df -BG --output=avail "${WS_ROOT:-$HOME}" 2>/dev/null | tail -1 | tr -d ' G')"
+  [[ -n "$ram" ]] && { [[ "$ram" -ge 4 ]] && ok "${ram}G RAM available" || warn "only ${ram}G RAM available"; }
+  [[ -n "$disk" ]] && { [[ "$disk" -ge 10 ]] && ok "${disk}G disk free" || warn "only ${disk}G disk free"; }
+  [[ -n "${STATE_DIR:-}" ]] && log_event doctor "$([[ $bad -eq 0 ]] && echo ok || echo fail)" "" "" ""
+  return $bad
+}
+
 case "${1:-}" in
+  guard)     shift; cmd_guard ;;
+  status)    shift; cmd_status "$@" ;;
+  context)   shift; cmd_context ;;
+  doctor)    shift; cmd_doctor ;;
   batch)     shift; cmd_batch "$@" ;;
   affected)  shift; cmd_affected "$@" ;;
   test)      shift; cmd_test "$@" ;;
   log)       shift; cmd_log "$@" ;;
   integrate|ship|clean) die "'$1' is not implemented yet" ;;
-  ""|-h|--help) sed -n '2,14p' "${BASH_SOURCE[0]}" ;;
+  ""|-h|--help) sed -n '2,/^set -/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//' ;;
   *) die "unknown command: $1" ;;
 esac

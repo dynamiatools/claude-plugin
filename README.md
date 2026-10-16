@@ -31,9 +31,17 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 
 | Tool | What it does |
 |---|---|
-| `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. Implemented so far: `batch new`, `affected`, `test t0`, `log` |
+| `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. Implemented so far: `batch new`, `affected`, `test t0`, `log`, `context`, `status`, `doctor`, `guard` |
 
 `ms-workspace` keeps an action log in `<workspace>/.ms-workspace/logs/YYYY-MM-DD.jsonl` (one JSON line per action, one file per day, old files pruned after `log_retention_days`, default 14). Read it with `ms-workspace log [-n N] [--day D] [--action A]`.
+
+#### Hooks
+
+`install.sh` never edits your `settings.json`. To enable the hooks, merge `settings/hooks.example.json` into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
+
+- `ms-workspace guard` (PreToolUse on Bash) blocks `git push` and `gh pr create|merge` **only inside batch worktrees**, so agents commit locally and a human integrates. Blocked attempts are logged.
+- `ms-workspace context` (SessionStart) injects a ~15-line briefing (active batches, open tasks, last actions) so the agent does not have to explore. It prints nothing outside a workspace.
+- The `permissions.allow` entry avoids a prompt on every `ms-workspace` call.
 
 ## Quick start (new machine)
 
@@ -75,4 +83,6 @@ Start a new Claude Code session afterwards so the skills are picked up.
 - [ ] Sanitized `settings.json` template
 - [x] `install.sh` to link everything idempotently
 - [ ] Document required external tools (e.g. `tmux`, `rtk`)
-- [ ] `ws` script and hooks for the multi-repo batch workflow (local integration, incremental tests)
+- [x] `ms-workspace`: batch new, affected, test t0, log, context, status, doctor, guard
+- [ ] `ms-workspace`: integrate, ship, clean, test t1/t2, env, critical modules, per-repo task mode
+- [ ] Haiku-based agents (`ms-scout`, `ms-test-triage`) and a `[tools]` policy in `workspace.toml`
