@@ -9,7 +9,9 @@ The goal is simple: on a fresh machine, clone this repo, run the setup, and have
 ```
 my-claude/
 ├── install.sh       # One-step setup after cloning
-├── bin/             # CLI tools (-> ~/.local/bin/), e.g. ms-workspace
+├── bin/             # CLI tools (-> ~/.local/bin/): ms-workspace, ms-statusline
+├── lib/             # ms_workspace Python package used by bin/ms-workspace
+├── tests/           # unittest suite for the tools
 ├── skills/          # Reusable skills   (-> ~/.claude/skills/)
 ├── agents/          # Custom subagents  (-> ~/.claude/agents/)
 └── CLAUDE.md        # Global instructions (-> ~/.claude/CLAUDE.md)
@@ -46,6 +48,8 @@ Read-only helpers. Three cheap ones run on Haiku so the main model does not spen
 |---|---|
 | `ms-statusline` | Claude Code status line (`[model] ctx | 5h % | 7d %`) that also saves the plan-usage snapshot read by `ms-workspace usage`. Needs a Pro/Max plan |
 | `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. See the flow below |
+
+`ms-workspace` is Python 3.11+ using only the standard library (no pip). `ms-statusline` stays a small bash+jq script because it runs on every status update.
 
 **Batch flow** (all local until `ship`):
 
@@ -103,6 +107,15 @@ Start a new Claude Code session afterwards so the skills are picked up.
 - **One agent per file:** `agents/<agent-name>.md` with the usual frontmatter (`name`, `description`, `tools`).
 - **No secrets:** never commit tokens, credentials or machine-specific paths. Use templates and placeholders instead.
 - **Keep skills generic:** a skill should work on any machine; anything environment-specific belongs in settings or in a local override.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests          # about 25 s; every test uses throwaway repos and a private HOME
+python3 -m unittest tests.test_ms_workspace.TestShip -v
+```
+
+The suite drives the real CLI (bare remotes, worktrees, conflicts, hooks, usage snapshots, pasted images), so it also works as a spec when the implementation changes. Set `MS_WORKSPACE_BIN` to run it against another build of the tool.
 
 ## Adding a new skill
 
