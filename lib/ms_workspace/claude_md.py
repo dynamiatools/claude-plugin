@@ -41,6 +41,9 @@ def render(ws: Workspace) -> str:
             "- Before starting a task or session run `ms-workspace usage --check` (add `--need <pct>` with your estimate of the 5h-window share the task needs). "
             "Exit 1 or 2: show the numbers and get the user's confirmation first. Exit 3: no data, proceed. "
             "Never leave work half done: prefer finishing or cleanly stopping a small step.",
+            "- Save durable facts with `ms-workspace memory add --type gotcha|decision|lesson \"...\"` (why, not just what). "
+            "If you must stop before finishing (usage critical, interrupted), leave a handoff: "
+            "`ms-workspace memory add --type handoff --batch <batch> \"state, next step, files touched\"`.",
             "", "## Batch flow (human-driven)",
             "`batch new` -> `agent new` -> `test t0` -> `integrate` -> `test t1` -> `ship --yes` -> `clean`.",
             "Skills: /ms-batch, /ms-integrate, /ms-ship.",

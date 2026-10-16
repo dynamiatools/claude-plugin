@@ -14,7 +14,7 @@ Run it from the workspace root (not from inside a batch worktree: a hook blocks 
 
 ## Steps
 
-0. **Check plan usage first**: `ms-workspace usage --check --need 5`. Exit 0 or 3 (no data): continue. Exit 1 or 2: show the printed numbers and use `AskUserQuestion` (continue / do a smaller step / stop) before doing anything else. Never start something that cannot be finished in the remaining window.
+0. **Check plan usage first**: `ms-workspace usage --check --need 5`. Exit 0 or 3 (no data): continue. Exit 1 or 2: show the printed numbers and use `AskUserQuestion` (continue / do a smaller step / stop) before doing anything else. If the user stops mid-batch, leave a handoff first: `ms-workspace memory add --type handoff --batch <batch> "state, next step, files touched"`. Never start something that cannot be finished in the remaining window.
 1. **Pick the batch**: `$ARGUMENTS`, or list with `ms-workspace clean`.
 
 2. **Show the plan**: `ms-workspace ship <batch>` (plan only). It lists, per repo, the target branch, push mode and commit count.

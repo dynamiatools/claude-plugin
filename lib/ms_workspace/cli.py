@@ -28,6 +28,10 @@ Usage:
   ms-workspace claude-md [--print]           (re)generate <workspace>/CLAUDE.md; only the managed block is touched
   ms-workspace usage [--check] [--need PCT] [--json|--line]   plan usage: 5h session and 7d week, pace, verdict
   ms-workspace images [list|capture|backfill]   archive images pasted in chat into <workspace>/.ms-workspace/images/
+  ms-workspace memory [add|list|search|show|forget]   small local notes: decisions, lessons, gotchas, handoffs
+  ms-workspace insights [--days N] [--json]  what the log says: slow/flaky tests, time and plan usage per batch
+  ms-workspace tokens [--days N] [--json]    token audit of the Claude Code sessions run inside this workspace
+  ms-workspace setup-hooks [--dry-run] [--remove] [--project]   merge the ms-* hooks and status line into settings.json
   ms-workspace doctor                        check tools, versions, resources and workspace.toml
   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 
@@ -70,16 +74,20 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd == "context":
         from .overview import cmd_context
         return cmd_context(Workspace.load(required=False))
+    if cmd == "setup-hooks":
+        from .setup import cmd_setup_hooks
+        return cmd_setup_hooks(args)
     if cmd == "doctor":
         from .overview import cmd_doctor
         return cmd_doctor(Workspace.load(required=False))
 
-    from . import batches, claude_md, overview, runner
+    from . import batches, claude_md, insights, memory, overview, runner, tokens
     table = {
         "batch": batches.cmd_batch, "agent": batches.cmd_agent, "affected": batches.cmd_affected,
         "env": batches.cmd_env, "integrate": batches.cmd_integrate, "ship": batches.cmd_ship,
         "clean": batches.cmd_clean, "test": runner.cmd_test, "log": overview.cmd_log,
         "status": overview.cmd_status, "claude-md": claude_md.cmd_claude_md,
+        "memory": memory.cmd_memory, "insights": insights.cmd_insights, "tokens": tokens.cmd_tokens,
     }
     if cmd not in table:
         print(f"ERROR: unknown command: {cmd}", file=sys.stderr)

@@ -1,6 +1,7 @@
 """Read-only views: log, status, context, doctor."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -37,7 +38,6 @@ def cmd_log(ws: Workspace, args: list[str]) -> int:
         if not files:
             print("(no log yet)")
             return 0
-    import json
     rows = []
     for f in files:
         for l in f.read_text(encoding="utf-8").splitlines():
@@ -95,6 +95,9 @@ def cmd_context(ws: Workspace | None) -> int:
             pass
     if buf.getvalue().strip():
         print("Plan " + buf.getvalue().strip())
+    from .memory import context_lines
+    for l in context_lines(ws):
+        print(l)
     print("Recent actions:")
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -158,10 +161,23 @@ def cmd_doctor(ws: Workspace | None) -> int:
         if not bad[0]:
             ok("all repos present, bases and deps valid")
 
+    print("Hooks:")
+    from .setup import installed_commands, our_commands, settings_path, SOURCE
+    try:
+        sp = settings_path()
+        have = installed_commands(json.loads(sp.read_text())) if sp.exists() else set()
+        wanted = our_commands(json.loads(SOURCE.read_text()))
+        missing = sorted(wanted - have)
+        if missing:
+            warn("not installed in settings.json: " + ", ".join(missing) + " (run /ms-setup)")
+        else:
+            ok("ms-workspace hooks are installed in settings.json")
+    except (OSError, ValueError):
+        warn("could not read settings.json to check hooks (run /ms-setup)")
+
     print("Plan usage:")
     snap = snapshot_path()
     if snap.is_file():
-        import json
         try:
             age = int((time.time() - json.loads(snap.read_text())["captured_at"]) // 60)
             ok(f"usage snapshot {age} min old (ms-statusline is working)")

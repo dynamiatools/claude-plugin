@@ -912,5 +912,398 @@ class TestImages(Base):
         self.assertTrue((self.ws.root / index[0]["file"]).exists())
 
 
+# --------------------------------------------------------------------- memory
+class TestMemory(Base):
+    def add(self, *args, **kw):
+        r = self.ws.ms("memory", "add", *args, **kw)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip().replace("saved ", "")
+
+    def test_add_list_search_show_forget(self):
+        name = self.add("--type", "gotcha", "--title", "Flaky port 8080", "The e2e stack needs port 8080 free.")
+        self.add("--type", "decision", "We keep push direct on next because the team merges there.")
+        out = self.ws.ms("memory", "list").stdout
+        self.assertIn("gotcha", out)
+        self.assertIn("Flaky port 8080", out)
+        self.assertEqual(len(self.ws.ms("memory", "list", "--type", "decision").stdout.strip().splitlines()), 1)
+        found = self.ws.ms("memory", "search", "PORT").stdout
+        self.assertIn(name, found)
+        self.assertIn("8080", found)
+        self.assertIn("no matches", self.ws.ms("memory", "search", "nonexistent-term").stdout)
+        shown = self.ws.ms("memory", "show", name).stdout
+        self.assertIn("The e2e stack needs port 8080 free.", shown)
+        self.assertIn("forgot", self.ws.ms("memory", "forget", name).stdout)
+        self.assertNotIn("Flaky port 8080", self.ws.ms("memory", "list").stdout)
+
+    def test_text_can_come_from_stdin(self):
+        self.assertEqual(self.ws.ms("memory", "add", "--type", "lesson", input="multi\nline lesson\n").returncode, 0)
+        self.assertIn("multi", self.ws.ms("memory", "list").stdout)
+
+    def test_validation_and_empty_state(self):
+        self.assertIn("no notes", self.ws.ms("memory", "list").stdout)
+        self.assertNotEqual(self.ws.ms("memory", "add", "--type", "novel", "x").returncode, 0)
+        self.assertNotEqual(self.ws.ms("memory", "add", "--type", "lesson", input="  ").returncode, 0)
+        self.assertNotEqual(self.ws.ms("memory", "show", "ghost").returncode, 0)
+
+    def test_ambiguous_reference_is_rejected(self):
+        self.add("--title", "alpha one", "a")
+        self.add("--title", "alpha two", "b")
+        r = self.ws.ms("memory", "show", "alpha")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("ambiguous", r.stderr)
+
+    def test_context_shows_handoffs_of_active_batches_only(self):
+        self.ws.batch("b1")
+        self.add("--type", "handoff", "--batch", "b1", "Stopped after integrate; next run test t1 and ship.")
+        self.add("--type", "handoff", "--batch", "gone", "Old batch handoff")
+        self.add("--type", "gotcha", "--title", "Port clash", "x")
+        ctx = self.ws.ms("context").stdout
+        self.assertIn("Memory: 3 notes", ctx)
+        self.assertIn("HANDOFF b1: Stopped after integrate", ctx)
+        self.assertNotIn("HANDOFF gone", ctx)
+        self.assertIn("Port clash", ctx)
+
+    def test_cleaning_a_batch_drops_its_handoffs(self):
+        d = self.ws.batch("b1")
+        self.ws.commit(d / "lib", "f", {"f.txt": "1"})
+        self.add("--type", "handoff", "--batch", "b1", "resume here")
+        self.add("--type", "decision", "keep me")
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e"))
+        self.assertOk(self.ws.ms("clean", "b1"))
+        out = self.ws.ms("memory", "list").stdout
+        self.assertNotIn("resume here", out)
+        self.assertIn("keep me", out)
+
+    def test_workspace_claude_md_tells_agents_about_memory(self):
+        self.assertIn("memory add --type handoff", self.ws.ms("claude-md", "--print").stdout)
+
+
+# ------------------------------------------------- log fields and insights
+class TestInsights(Base):
+    def snapshot(self, p5, p7=10.0):
+        now = int(time.time())
+        self.ws.cache.mkdir(exist_ok=True)
+        (self.ws.cache / "usage.json").write_text(json.dumps({
+            "captured_at": now, "five_hour": {"used_percentage": p5, "resets_at": now + 3 * 3600},
+            "seven_day": {"used_percentage": p7, "resets_at": now + 4 * 86400}}))
+
+    def events(self):
+        out = []
+        for f in sorted((self.ws.root / ".ms-workspace" / "logs").glob("*.jsonl")):
+            out += [json.loads(l) for l in f.read_text().splitlines()]
+        return out
+
+    def write_events(self, rows):
+        logs = self.ws.root / ".ms-workspace" / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        with open(logs / f"{time.strftime('%Y-%m-%d')}.jsonl", "a") as fh:
+            for r in rows:
+                fh.write(json.dumps({"detail": "", "repo": "", **r}) + "\n")
+
+    def test_test_events_carry_duration_and_code_key(self):
+        wt = self.ws.batch("b1") / "lib"
+        self.ws.ms("test", "t0", cwd=wt)
+        ev = next(e for e in self.events() if e["action"] == "test.t0")
+        self.assertIn("secs", ev)
+        self.assertRegex(ev["key"], r"^[0-9a-f]{20}$")
+        self.ws.ms("test", "t0", cwd=wt)
+        self.assertTrue([e for e in self.events() if e["action"] == "test.t0"][-1]["cached"])
+
+    def test_events_carry_plan_usage_when_a_fresh_snapshot_exists(self):
+        self.snapshot(31.5, 12.0)
+        self.ws.batch("b1", "lib")
+        ev = next(e for e in self.events() if e["action"] == "batch.new")
+        self.assertEqual((ev["u5"], ev["u7"]), (31.5, 12.0))
+
+    def test_no_usage_fields_without_a_snapshot(self):
+        self.ws.batch("b1", "lib")
+        self.assertNotIn("u5", next(e for e in self.events() if e["action"] == "batch.new"))
+
+    def test_flaky_candidate_same_code_fails_then_passes(self):
+        flag = self.ws.tmp / "flag"
+        self.ws.set_toml(DEFAULT_TOML.replace('unit = "echo unit-lib"', f'unit = "test -f {flag} || (touch {flag}; exit 1)"'))
+        wt = self.ws.batch("b1") / "lib"
+        self.assertNotEqual(self.ws.ms("test", "t0", cwd=wt).returncode, 0)
+        self.assertEqual(self.ws.ms("test", "t0", cwd=wt).returncode, 0)
+        data = json.loads(self.ws.ms("insights", "--json").stdout)
+        self.assertEqual([f["repo"] for f in data["flaky"]], ["lib"])
+        self.assertEqual((data["tests"]["lib"]["ok"], data["tests"]["lib"]["fail"]), (1, 1))
+        self.assertIn("Flaky candidates", self.ws.ms("insights").stdout)
+
+    def test_batch_cost_is_the_sum_of_usage_increases(self):
+        self.snapshot(10)
+        d = self.ws.batch("b1", "lib")
+        self.snapshot(25)
+        self.ws.ms("test", "t0", cwd=d / "lib")
+        self.snapshot(5)   # a window reset must not count as negative cost
+        self.ws.ms("test", "t0", "--no-cache", cwd=d / "lib")
+        self.snapshot(9)
+        self.ws.ms("test", "t0", "--no-cache", cwd=d / "lib")
+        data = json.loads(self.ws.ms("insights", "--json").stdout)
+        self.assertEqual(data["batches"]["b1"]["u5_cost"], 15.0 + 4.0)
+        self.assertIn("of the 5h window", self.ws.ms("insights").stdout)
+
+    def test_counts_guard_blocks_and_conflicts(self):
+        d = self.ws.batch("b1")
+        self.ws.ms("guard", input=json.dumps({"tool_input": {"command": "git push"}, "cwd": str(d / "lib")}))
+        data = json.loads(self.ws.ms("insights", "--json").stdout)
+        self.assertEqual(data["guard_blocks"], 1)
+
+    def test_need_auto_uses_the_median_of_completed_batches(self):
+        self.snapshot(20)
+        rows = []
+        for b, (lo, hi) in {"a": (0, 10), "b": (0, 20), "c": (0, 30)}.items():
+            rows += [{"ts": f"2026-10-15T10:0{len(rows) % 9}:00-05:00", "action": "batch.new", "status": "ok", "batch": b, "u5": lo},
+                     {"ts": f"2026-10-15T11:0{len(rows) % 9}:00-05:00", "action": "ship", "status": "ok", "batch": b, "u5": hi}]
+        self.write_events(rows)
+        out = self.ws.ms("usage", "--need", "auto").stdout
+        self.assertIn("planned task: ~20% of the 5h window (median of 3 past batches)", out)
+        self.assertIn("Typical completed batch", self.ws.ms("insights").stdout)
+
+    def test_need_auto_refuses_without_history(self):
+        self.snapshot(20)
+        r = self.ws.ms("usage", "--need", "auto")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("history", r.stderr)
+        self.assertNotEqual(self.ws.ms("usage", "--need", "auto", cwd=self.ws.tmp).returncode, 0)
+
+    def test_empty_log(self):
+        self.assertIn("0 logged actions", self.ws.ms("insights").stdout)
+
+
+# ----------------------------------------------------------------- token audit
+class TestTokens(Base):
+    def assistant(self, mid, content, cwd, out=100, new=5, cache=1000, created=2000):
+        return {"type": "assistant", "cwd": str(cwd), "timestamp": "2026-10-15T10:00:00.000Z", "sessionId": "s1",
+                "message": {"id": mid, "role": "assistant", "model": "claude-sonnet-5-5", "content": content,
+                            "usage": {"input_tokens": new, "cache_creation_input_tokens": created,
+                                      "cache_read_input_tokens": cache, "output_tokens": out}}}
+
+    def result(self, tool_id, chars, cwd):
+        return {"type": "user", "cwd": str(cwd), "timestamp": "2026-10-15T10:00:05.000Z",
+                "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": tool_id, "content": "x" * chars}]}}
+
+    def session(self, name, rows, project="-proj"):
+        d = self.ws.home / ".claude" / "projects" / project
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{name}.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+
+    def read_block(self, tid, path):
+        return {"type": "tool_use", "id": tid, "name": "Read", "input": {"file_path": path}}
+
+    def test_totals_dedupe_repeated_message_lines_and_biggest_results(self):
+        cwd = self.ws.root / ".batches" / "b1" / "lib"
+        rows = [self.assistant("m1", [{"type": "thinking"}], cwd), self.assistant("m1", [self.read_block("t1", "/src/Big.java")], cwd),
+                self.result("t1", 40000, cwd),
+                self.assistant("m2", [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "ls"}}], cwd, out=50),
+                self.result("t2", 400, cwd)]
+        self.session("s1", rows)
+        data = json.loads(self.ws.ms("tokens", "--json").stdout)
+        self.assertEqual(data["sessions"], 1)
+        self.assertEqual(data["total"]["requests"], 2, "the same message repeated per content block counts once")
+        self.assertEqual(data["total"]["output"], 150)
+        self.assertEqual(data["total"]["new_input"], 2 * (5 + 2000))
+        self.assertEqual(data["total"]["cache_read"], 2000)
+        self.assertIn("b1/lib", data["scopes"])
+        self.assertEqual(data["biggest"][0]["tool"], "Read")
+        self.assertEqual(data["biggest"][0]["approx_tokens"], 10000)
+        self.assertEqual(data["tools"][0]["tool"], "Read")
+        out = self.ws.ms("tokens").stdout
+        self.assertIn("Token audit", out)
+        self.assertIn("Hint: A single Read result", out)
+
+    def test_repeated_reads_are_flagged(self):
+        cwd = self.ws.root / "lib"
+        rows = []
+        for i in range(3):
+            rows += [self.assistant(f"m{i}", [self.read_block(f"t{i}", "/src/Same.java")], cwd), self.result(f"t{i}", 100, cwd)]
+        self.session("s2", rows)
+        data = json.loads(self.ws.ms("tokens", "--json").stdout)
+        self.assertEqual(data["repeated_reads"][0]["reads"], 3)
+        self.assertIn("read 3 times", self.ws.ms("tokens").stdout)
+
+    def test_sessions_outside_the_workspace_are_ignored(self):
+        self.session("s3", [self.assistant("m1", [{"type": "text", "text": "hi"}], self.ws.tmp / "elsewhere")])
+        self.assertIn("No Claude Code sessions", self.ws.ms("tokens").stdout)
+
+    def test_old_sessions_are_ignored(self):
+        self.session("s4", [self.assistant("m1", [{"type": "text", "text": "hi"}], self.ws.root / "lib")])
+        f = self.ws.home / ".claude" / "projects" / "-proj" / "s4.jsonl"
+        old = time.time() - 30 * 86400
+        os.utime(f, (old, old))
+        self.assertIn("No Claude Code sessions", self.ws.ms("tokens").stdout)
+        self.assertEqual(json.loads(self.ws.ms("tokens", "--days", "60", "--json").stdout)["sessions"], 1)
+
+    def test_agent_worktree_scope(self):
+        cwd = self.ws.root / ".batches" / "b1" / ".agents" / "t1" / "lib"
+        self.session("s5", [self.assistant("m1", [{"type": "text", "text": "hi"}], cwd)])
+        self.assertIn("b1/lib", json.loads(self.ws.ms("tokens", "--json").stdout)["scopes"])
+
+
+# ----------------------------------------------------------- hooks / settings
+class TestSetupHooks(Base):
+    def setUp(self):
+        super().setUp()
+        self.home = self.ws.tmp / "claude-home"
+        self.settings = self.home / "settings.json"
+        self.env = {"CLAUDE_HOME": str(self.home)}
+
+    def setup(self, *args):
+        return self.ws.ms("setup-hooks", *args, cwd=self.ws.tmp, env=self.env)
+
+    def load(self):
+        return json.loads(self.settings.read_text())
+
+    def commands(self, data):
+        return [h["command"] for groups in data.get("hooks", {}).values() for g in groups for h in g["hooks"]]
+
+    def test_dry_run_changes_nothing(self):
+        r = self.setup("--dry-run")
+        self.assertOk(r)
+        self.assertIn("dry run", r.stdout)
+        self.assertIn("added", r.stdout)
+        self.assertFalse(self.settings.exists())
+
+    def test_fresh_install_adds_everything_once(self):
+        self.assertOk(self.setup())
+        data = self.load()
+        cmds = self.commands(data)
+        for c in ("ms-workspace guard", "ms-workspace context", "ms-workspace images capture"):
+            self.assertIn(c, cmds)
+        self.assertEqual(data["statusLine"]["command"], "ms-statusline")
+        self.assertIn("Bash(ms-workspace:*)", data["permissions"]["allow"])
+        before = self.settings.read_text()
+        r = self.setup()
+        self.assertIn("Already up to date", r.stdout)
+        self.assertEqual(self.settings.read_text(), before)
+        for event, groups in self.load()["hooks"].items():
+            per_event = [h["command"] for g in groups for h in g["hooks"]]
+            self.assertEqual(len(per_event), len(set(per_event)), event)
+
+    def test_existing_settings_are_preserved_and_backed_up(self):
+        self.home.mkdir()
+        existing = {"model": "opus", "statusLine": {"type": "command", "command": "my-line"},
+                    "permissions": {"allow": ["Bash(ls:*)"], "deny": ["Bash(rm:*)"]},
+                    "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]},
+                                              {"matcher": "Grep|Glob", "hooks": [{"type": "command", "command": "gate"}]}]}}
+        self.settings.write_text(json.dumps(existing))
+        r = self.setup()
+        self.assertOk(r)
+        self.assertIn("backup:", r.stdout)
+        self.assertIn("kept     statusLine", r.stdout)
+        data = self.load()
+        self.assertEqual(data["model"], "opus")
+        self.assertEqual(data["statusLine"]["command"], "my-line", "another status line is never overwritten")
+        self.assertEqual(data["permissions"]["deny"], ["Bash(rm:*)"])
+        self.assertEqual(data["permissions"]["allow"][0], "Bash(ls:*)")
+        bash_group = next(g for g in data["hooks"]["PreToolUse"] if g["matcher"] == "Bash")
+        self.assertEqual([h["command"] for h in bash_group["hooks"]], ["rtk hook claude", "ms-workspace guard"])
+        self.assertIn("gate", self.commands(data))
+        self.assertEqual(len(list(self.home.glob("settings.json.bak-*"))), 1)
+
+    def test_remove_only_takes_out_what_we_added(self):
+        self.home.mkdir()
+        self.settings.write_text(json.dumps({"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]}]}}))
+        self.setup()
+        r = self.setup("--remove")
+        self.assertOk(r)
+        self.assertIn("removed", r.stdout)
+        data = self.load()
+        self.assertEqual(self.commands(data), ["rtk hook claude"])
+        self.assertNotIn("statusLine", data)
+        self.assertNotIn("Bash(ms-workspace:*)", data.get("permissions", {}).get("allow", []))
+        self.assertIn("Nothing to remove", self.setup("--remove").stdout)
+
+    def test_invalid_json_is_never_overwritten(self):
+        self.home.mkdir()
+        self.settings.write_text("{ not json")
+        r = self.setup()
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(self.settings.read_text(), "{ not json")
+
+    def test_project_scope_writes_to_the_project_settings(self):
+        proj = self.ws.tmp / "proj"
+        proj.mkdir()
+        r = self.ws.ms("setup-hooks", "--project", cwd=proj, env=self.env)
+        self.assertOk(r)
+        self.assertTrue((proj / ".claude" / "settings.json").exists())
+        self.assertFalse(self.settings.exists())
+
+    def test_doctor_checks_the_hooks(self):
+        env = {"CLAUDE_HOME": str(self.home)}
+        before = self.ws.ms("doctor", env=env).stdout
+        self.assertIn("not installed in settings.json", before)
+        self.setup()
+        self.assertIn("hooks are installed", self.ws.ms("doctor", env=env).stdout)
+
+
+# ------------------------------------------------------------------ packaging
+class TestPackaging(unittest.TestCase):
+    """Skills and agents are plain files that Claude Code parses as YAML frontmatter; a stray ': ' breaks them."""
+
+    def frontmatter(self, path):
+        text = path.read_text()
+        self.assertTrue(text.startswith("---\n"), f"{path}: missing frontmatter")
+        head = text[4:].split("\n---\n", 1)[0]
+        fields = {}
+        for line in head.splitlines():
+            if line.startswith((" ", "-")) or ":" not in line:
+                continue
+            key, _, value = line.partition(":")
+            fields[key.strip()] = value.strip()
+        return fields
+
+    def test_skills_have_valid_frontmatter(self):
+        skills = sorted((REPO / "skills").glob("*/SKILL.md"))
+        self.assertGreaterEqual(len(skills), 8)
+        for path in skills:
+            with self.subTest(skill=path.parent.name):
+                f = self.frontmatter(path)
+                self.assertEqual(f.get("name"), path.parent.name)
+                self.assertTrue(f.get("description"))
+                for key, value in f.items():
+                    if value and value[0] not in "\"'[{>|":
+                        self.assertNotIn(": ", value, f"{key} has an unquoted ': ' (invalid YAML)")
+                        self.assertNotIn(" #", value, f"{key} has an unquoted ' #' (YAML comment)")
+
+    def test_agents_have_valid_frontmatter_and_the_prefix(self):
+        for path in sorted((REPO / "agents").glob("*.md")):
+            with self.subTest(agent=path.stem):
+                f = self.frontmatter(path)
+                self.assertEqual(f.get("name"), path.stem)
+                self.assertTrue(path.stem.startswith("ms-agent-"))
+                self.assertIn(f.get("model"), ("haiku", "sonnet", "opus"))
+                self.assertTrue(f.get("description"))
+                for key, value in f.items():
+                    if value and value[0] not in "\"'[{>|":
+                        self.assertNotIn(": ", value, f"{key} has an unquoted ': ' (invalid YAML)")
+
+    def test_settings_example_is_valid_and_complete(self):
+        data = json.loads((REPO / "settings" / "hooks.example.json").read_text())
+        cmds = {h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]}
+        self.assertEqual(cmds, {"ms-workspace guard", "ms-workspace context", "ms-workspace images capture"})
+        self.assertEqual(data["statusLine"]["command"], "ms-statusline")
+
+    def test_example_workspace_config_parses(self):
+        import tomllib
+        cfg = tomllib.loads((REPO / "skills" / "ms-workspace-init" / "references" / "workspace.example.toml").read_text())
+        self.assertIn("repos", cfg)
+
+    def test_installer_links_everything_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {**os.environ, "CLAUDE_HOME": f"{tmp}/c", "BIN_DIR": f"{tmp}/b"}
+            first = run([str(REPO / "install.sh")], env=env)
+            self.assertEqual(first.returncode, 0, first.stderr)
+            self.assertTrue((Path(tmp) / "b" / "ms-workspace").is_symlink())
+            self.assertTrue((Path(tmp) / "c" / "skills" / "ms-ship").is_symlink())
+            self.assertTrue((Path(tmp) / "c" / "agents" / "ms-agent-boss.md").is_symlink())
+            self.assertTrue((Path(tmp) / "c" / "CLAUDE.md").is_symlink())
+            second = run([str(REPO / "install.sh")], env=env)
+            self.assertNotIn("backup", second.stdout)
+            dry = run([str(REPO / "install.sh"), "--uninstall"], env=env)
+            self.assertFalse((Path(tmp) / "b" / "ms-workspace").exists())
+            self.assertEqual(dry.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -94,7 +94,7 @@ class Workspace:
         return self.repo_cfg(repo).get("tasks") or self.get("tasks", default="local")
 
     # -- action log: one JSON line per action, one file per day
-    def log(self, action: str, status: str, repo: str = "", batch: str = "", detail: str = ""):
+    def log(self, action: str, status: str, repo: str = "", batch: str = "", detail: str = "", **extra):
         self.log_dir.mkdir(parents=True, exist_ok=True)
         path = self.log_dir / f"{time.strftime('%Y-%m-%d')}.jsonl"
         if not path.exists():
@@ -102,8 +102,28 @@ class Workspace:
         rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "action": action, "status": status,
                "repo": repo, "batch": batch, "detail": detail}
         rec["ts"] = rec["ts"][:-2] + ":" + rec["ts"][-2:]
+        rec.update({k: v for k, v in extra.items() if v is not None})
+        rec.update(self._usage_fields())
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, separators=(",", ":"), ensure_ascii=False) + "\n")
+
+    @staticmethod
+    def _usage_fields() -> dict:
+        """Plan usage (percent of the 5h and 7d windows) at event time, when a fresh snapshot exists."""
+        try:
+            from .usage import snapshot_path
+            snap = json.loads(snapshot_path().read_text())
+            now = time.time()
+            if now - snap["captured_at"] > 1800:
+                return {}
+            out = {}
+            for key, name in (("u5", "five_hour"), ("u7", "seven_day")):
+                w = snap.get(name)
+                if w and w.get("used_percentage") is not None and w["resets_at"] > now:
+                    out[key] = w["used_percentage"]
+            return out
+        except Exception:
+            return {}
 
     def _rotate(self):
         cutoff = time.time() - float(self.get("log_retention_days", default=14)) * 86400

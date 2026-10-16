@@ -11,7 +11,7 @@ Joins agent work into `int/<batch>` and validates it. Local only: nothing is pus
 
 ## Steps
 
-0. **Check plan usage first**: `ms-workspace usage --check --need 10`. Exit 0 or 3 (no data): continue. Exit 1 or 2: show the printed numbers and use `AskUserQuestion` (continue / do a smaller step / stop) before doing anything else. Never start something that cannot be finished in the remaining window.
+0. **Check plan usage first**: `ms-workspace usage --check --need 10`. Exit 0 or 3 (no data): continue. Exit 1 or 2: show the printed numbers and use `AskUserQuestion` (continue / do a smaller step / stop) before doing anything else. If the user stops mid-batch, leave a handoff first: `ms-workspace memory add --type handoff --batch <batch> "state, next step, files touched"`. Never start something that cannot be finished in the remaining window.
 1. **Pick the batch**: `$ARGUMENTS`, or run `ms-workspace clean` to list batches and ask if ambiguous.
 
 2. **Preview**: `ms-workspace integrate <batch> --dry-run`. It checks each agent branch against the current integration branch only; two agents that clash with each other show up in step 3.

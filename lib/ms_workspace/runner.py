@@ -57,28 +57,25 @@ def run_tests(ws: Workspace, repo: str, directory: Path, level: str, batch: str 
     if not cmd:
         die(f"no test command configured for '{repo}' in workspace.toml")
 
-    key = ""
     memo_dir = ws.state_dir / "memo"
     memo_dir.mkdir(parents=True, exist_ok=True)
-    if not os.environ.get("MS_NO_MEMO"):
-        key = _memo_key(ws, repo, directory, batch, cmd)
-        if (memo_dir / f"{repo}-{key}").exists():
-            print(f"PASS {level} {repo} (cached: same code and command already passed): {cmd}")
-            ws.log(f"test.{level}", "ok", repo, batch, f"cached: {cmd}")
-            return 0
+    key = _memo_key(ws, repo, directory, batch, cmd)
+    if not os.environ.get("MS_NO_MEMO") and (memo_dir / f"{repo}-{key}").exists():
+        print(f"PASS {level} {repo} (cached: same code and command already passed): {cmd}")
+        ws.log(f"test.{level}", "ok", repo, batch, f"cached: {cmd}", key=key, cached=True)
+        return 0
     start = time.time()
     rc, out = _run_locked(ws, cmd, directory, 1800)
     secs = int(time.time() - start)
     try:
         if rc == 0:
-            if key:
-                (memo_dir / f"{repo}-{key}").touch()
+            (memo_dir / f"{repo}-{key}").touch()
             print(f"PASS {level} {repo} ({secs}s): {cmd}")
-            ws.log(f"test.{level}", "ok", repo, batch, cmd)
+            ws.log(f"test.{level}", "ok", repo, batch, cmd, key=key, secs=secs)
         else:
             print(f"FAIL {level} {repo} ({secs}s): {cmd}", file=sys.stderr)
             print(_tail(out), file=sys.stderr)
-            ws.log(f"test.{level}", "fail", repo, batch, cmd)
+            ws.log(f"test.{level}", "fail", repo, batch, cmd, key=key, secs=secs)
     finally:
         os.unlink(out)
     return rc
@@ -99,11 +96,11 @@ def run_e2e(ws: Workspace, batch: str) -> int:
     try:
         if rc == 0:
             print(f"PASS t2 e2e ({secs}s): {cmd}")
-            ws.log("test.t2", "ok", erepo, batch, cmd)
+            ws.log("test.t2", "ok", erepo, batch, cmd, secs=secs)
         else:
             print(f"FAIL t2 e2e ({secs}s): {cmd}", file=sys.stderr)
             print(_tail(out), file=sys.stderr)
-            ws.log("test.t2", "fail", erepo, batch, cmd)
+            ws.log("test.t2", "fail", erepo, batch, cmd, secs=secs)
     finally:
         os.unlink(out)
     return rc

@@ -322,6 +322,8 @@ def cmd_clean(ws: Workspace, args: list[str]) -> int:
             git(ws.root / r, "branch", "-D", b)
         ws.log("clean", "ok", r, batch, "")
         print(f"  cleaned {r}")
+    from .memory import drop_batch_handoffs
+    drop_batch_handoffs(ws, batch)
     (ws.batch_dir / batch / "TASKS.md").unlink(missing_ok=True)
     # Only empty directories (such as .agents/<task>) are left; remove bottom-up.
     for p in sorted((ws.batch_dir / batch).rglob("*"), key=lambda x: len(x.parts), reverse=True):

@@ -29,6 +29,8 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 | `/ms-batch` | Starts or inspects a local batch of work across repos (isolated worktrees, optional per-agent worktrees) |
 | `/ms-integrate` | Merges agent branches into the batch, detects conflicts, runs the incremental tests |
 | `/ms-ship` | Publishes a validated batch (plan, confirmation, sync, tests, e2e, push). User-invoked only |
+| `/ms-setup` | Merges the ms-* hooks, status line and permission into `settings.json` (preview, confirmation, backup, `--remove`). User-invoked only |
+| `/ms-report` | How it is going: plan usage and pace, where tokens went, flaky or slow tests, cost per batch, and the next step |
 | `/ms-workspace-init` | Builds a multi-repo workspace from scratch (clones repos, detects stacks, writes `workspace.toml`) |
 
 ### Agents
@@ -65,6 +67,10 @@ Read-only helpers. Three cheap ones run on Haiku so the main model does not spen
 
 **Pasted images.** Claude Code does not save images pasted in chat as files; they exist only as base64 inside the session transcript. `ms-workspace images capture` (a Stop/SessionEnd hook) reads just the new part of the transcript and saves each image to `<workspace>/.ms-workspace/images/YYYY-MM-DD/HHMMSS_<session>_<n>.<ext>`, with an `index.jsonl` (time, session, directory, and the text sent with the image). Duplicates are skipped by hash, images only land in the workspace that contains the session's directory, and files older than `images_retention_days` (default 30) are pruned. `ms-workspace images [list -n N --day D]` shows recent ones and `images backfill` imports past sessions. Images may contain sensitive data: they stay local, outside any repo.
 
+**Memory.** The log says what happened; `ms-workspace memory` keeps what was learned: one markdown note per fact under `.ms-workspace/memory/`, typed `decision`, `lesson`, `gotcha` or `handoff` (`add`, `list`, `search`, `show`, `forget`). `context` shows only a count, the latest handoff of each active batch and a few titles, so it costs a handful of tokens. A handoff is how an agent stops cleanly (usage critical, interrupted) and how the next session resumes; handoffs disappear when their batch is cleaned.
+
+**Insights and token audit.** Test events in the log now carry duration, a hash of the code under test and the plan usage at that moment. `ms-workspace insights` turns that into slow runs, flaky candidates (same code, both pass and fail), time per batch and an approximate plan cost per batch, which `usage --need auto` uses as the median of completed batches (it needs at least 3). `ms-workspace tokens` reads Claude Code's local transcripts for sessions run inside the workspace and reports requests, new input, cache reads and output per batch or repo, the tools whose results were largest (characters divided by 4), repeated reads of one file, and hints. Everything stays local.
+
 Also: `images`, `usage`, `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guard` (see Hooks) and `claude-md`.
 
 **Workspace CLAUDE.md.** `ms-workspace claude-md` (run by `/ms-workspace-init`) generates `<workspace>/CLAUDE.md`: repos in dependency order, agent rules, the batch flow, token and tool guidance. Only the block between the `ms-workspace:begin/end` markers is managed, so your own notes around it survive every regeneration.
@@ -73,12 +79,12 @@ Also: `images`, `usage`, `log`, `affected`, `context`, `status [--fetch]`, `doct
 
 #### Hooks
 
-`install.sh` never edits your `settings.json`. To enable the hooks, merge `settings/hooks.example.json` into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
+`install.sh` never edits your `settings.json`. Run **`/ms-setup`** (or `ms-workspace setup-hooks`) to merge `settings/hooks.example.json` into it. The merge is idempotent, shows a preview first (`--dry-run`), keeps every other hook, permission and setting, keeps a status line someone else configured, writes a timestamped backup, and `--remove` takes out only what it added. `ms-workspace doctor` reports whether the hooks are installed.
 
 - `ms-workspace guard` (PreToolUse on Bash) blocks `git push`, `gh pr create|merge` and `ms-workspace ship|clean` **only inside batch worktrees**, so agents commit locally and a human integrates. Blocked attempts are logged.
 - `ms-workspace images capture` (Stop and SessionEnd) archives images pasted in chat; see below.
 - `ms-statusline` (as `statusLine`) shows usage in the footer and feeds `ms-workspace usage`.
-- `ms-workspace context` (SessionStart) injects a ~15-line briefing (active batches, open tasks, plan usage, last actions) so the agent does not have to explore. It prints nothing outside a workspace.
+- `ms-workspace context` (SessionStart) injects a short briefing (active batches, open tasks, plan usage, memory and handoffs, last actions) so the agent does not have to explore. It prints nothing outside a workspace.
 - The `permissions.allow` entry avoids a prompt on every `ms-workspace` call.
 
 ## Quick start (new machine)

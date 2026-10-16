@@ -98,16 +98,26 @@ def evaluate(snap: dict, now: float, warn: float, stop: float, need: float) -> d
 
 
 def cmd_usage(ws: Workspace | None, args: list[str]) -> int:
-    check, need, mode = False, 0.0, "text"
+    check, need, mode, need_note = False, 0.0, "text", ""
     it = iter(args)
     for a in it:
         if a == "--check":
             check = True
         elif a == "--need":
-            try:
-                need = float(next(it))
-            except (StopIteration, ValueError):
-                die("--need needs a percentage")
+            raw = next(it, "")
+            if raw == "auto":
+                if ws is None:
+                    die("--need auto needs a workspace (it learns from its action log)")
+                from .insights import typical_cost
+                need, n = typical_cost(ws)
+                if n < 3:
+                    die(f"--need auto needs history: only {n} completed batch(es) with usage data (need 3); give a number instead")
+                need_note = f" (median of {n} past batches)"
+            else:
+                try:
+                    need = float(raw)
+                except ValueError:
+                    die("--need needs a percentage or 'auto'")
         elif a == "--json":
             mode = "json"
         elif a == "--line":
@@ -140,7 +150,7 @@ def cmd_usage(ws: Workspace | None, args: list[str]) -> int:
     else:
         out = res["text"]
         if need > 0:
-            out += f"\nplanned task: ~{num(need)}% of the 5h window"
+            out += f"\nplanned task: ~{num(need)}% of the 5h window{need_note}"
         lv = res["level"]
         advice = ("stop and confirm with the user before starting; do not leave work half done" if lv == 2
                   else "confirm with the user; prefer small steps that can be finished" if lv == 1 else "proceed")
