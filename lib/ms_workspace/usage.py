@@ -44,7 +44,7 @@ def dur(s: float) -> str:
 
 
 def analyze(win, length: int, now: float) -> dict:
-    if not win or win.get("used_percentage") is None:
+    if not win or win.get("used_percentage") is None or win.get("resets_at") is None:
         return {"state": "nodata"}
     left = win["resets_at"] - now
     if left <= 0:

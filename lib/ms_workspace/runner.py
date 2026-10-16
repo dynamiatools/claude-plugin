@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -52,7 +53,7 @@ def run_tests(ws: Workspace, repo: str, directory: Path, level: str, batch: str 
     test_cfg = ws.repo_cfg(repo).get("test") or {}
     cmd = ""
     if mods and test_cfg.get("affected"):
-        cmd = test_cfg["affected"].replace("{modules}", ",".join(mods))
+        cmd = test_cfg["affected"].replace("{modules}", shlex.quote(",".join(mods)))
     cmd = cmd or test_cfg.get("unit") or ""
     if not cmd:
         die(f"no test command configured for '{repo}' in workspace.toml")

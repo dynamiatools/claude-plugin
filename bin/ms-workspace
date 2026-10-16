@@ -4,6 +4,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from ms_workspace.compat import check  # noqa: E402
+
+_rc = check(sys.argv[1:])
+if _rc is not None:
+    sys.exit(_rc)
 from ms_workspace.cli import main  # noqa: E402
 
 sys.exit(main(sys.argv[1:]))

@@ -34,7 +34,22 @@ def _scope(ws: Workspace, cwd: str) -> str | None:
     return parts[0] if parts else "(workspace root)"
 
 
+def _first_cwd(path: Path) -> str:
+    with open(path, errors="replace") as fh:
+        for _, raw in zip(range(200), fh):
+            try:
+                cwd = json.loads(raw).get("cwd")
+            except ValueError:
+                continue
+            if cwd:
+                return cwd
+    return ""
+
+
 def read_session(path: Path, ws: Workspace) -> dict | None:
+    first = _first_cwd(path)
+    if not first or _scope(ws, first) is None:  # out of scope: skip without reading the whole file
+        return None
     msgs, tool_use, results = {}, {}, []
     scope, start, end, cwd0 = None, "", "", ""
     for raw in path.read_text(errors="replace").splitlines():

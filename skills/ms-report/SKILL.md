@@ -2,7 +2,7 @@
 name: ms-report
 description: Shows how work and plan usage are going, with current 5h and weekly usage and pace, where tokens went in recent sessions, and what the action log says (slow or flaky tests, cost per batch). Use when the user asks how it is going, whether tokens are being burned, whether there is enough budget to finish something, or what to optimize.
 argument-hint: "[days]"
-allowed-tools: Bash(ms-workspace:*)
+allowed-tools: Bash(ms-workspace usage:*) Bash(ms-workspace insights:*) Bash(ms-workspace tokens:*) Bash(ms-workspace memory:*)
 ---
 
 # ms-report
@@ -11,11 +11,11 @@ A short, decision-oriented report built from three deterministic commands. Do no
 
 ## Steps
 
-1. **Collect** (use `$ARGUMENTS` as the number of days when given, otherwise the defaults):
+1. **Collect** (`$ARGUMENTS` is an optional number of days; omit `--days` when it is empty):
    ```bash
    ms-workspace usage
-   ms-workspace insights
-   ms-workspace tokens
+   ms-workspace insights --days $ARGUMENTS
+   ms-workspace tokens --days $ARGUMENTS
    ```
    If a command says there is no data (no status line snapshot, no workspace, no sessions), say what is missing and how to enable it (`/ms-setup`), then continue with what exists.
 

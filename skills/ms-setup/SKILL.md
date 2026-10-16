@@ -3,7 +3,7 @@ name: ms-setup
 description: Installs or removes the ms-* hooks, status line and permission in Claude Code settings.json by merging them into the existing file, never overwriting other entries. Use after cloning the repo and running install.sh, when the hooks (guard, context, image archive) or the usage status line are missing, or when the user asks to enable or disable them.
 argument-hint: "[--project] [--remove]"
 disable-model-invocation: true
-allowed-tools: Bash(ms-workspace:*)
+allowed-tools: Bash(ms-workspace doctor:*)
 ---
 
 # ms-setup

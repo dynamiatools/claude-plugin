@@ -102,6 +102,11 @@ for bin in git jq tmux gh node; do
   else say "  MISSING  $bin"; fi
 done
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "  NOTE     $BIN_DIR is not in PATH; add it to your shell profile" ;; esac
+if command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+    say "  ok       python3 >= 3.11"
+else
+    say "  MISSING  python3 >= 3.11 (ms-workspace needs it; the guard hook still works on older versions)"
+fi
 command -v claude >/dev/null 2>&1 && say "  ok       claude" || say "  MISSING  claude (https://claude.com/claude-code)"
 
 say ""

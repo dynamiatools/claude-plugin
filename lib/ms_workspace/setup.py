@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .core import die
 
+LEGACY_ALLOW = ["Bash(ms-workspace:*)"]  # earlier, too broad rule: it auto-approved ship, clean and env
 SOURCE = Path(__file__).resolve().parents[2] / "settings" / "hooks.example.json"
 
 
@@ -55,13 +56,22 @@ def merge(settings: dict, src: dict) -> list[str]:
             report.append(f"present  statusLine: {cur['command']}")
         else:
             report.append(f"kept     statusLine already set to '{cur.get('command')}' (not overwritten; usage tracking needs ms-statusline)")
-    allow = settings.setdefault("permissions", {}).setdefault("allow", [])
-    for rule in src.get("permissions", {}).get("allow", []):
-        if rule in allow:
-            report.append(f"present  permission {rule}")
-        else:
-            allow.append(rule)
-            report.append(f"added    permission {rule}")
+    perms = settings.setdefault("permissions", {})
+    for kind in ("allow", "ask"):
+        rules = perms.setdefault(kind, [])
+        if kind == "allow":
+            for old in LEGACY_ALLOW:
+                if old in rules:
+                    rules.remove(old)
+                    report.append(f"removed  permission {old} (too broad; replaced by the narrower rules below)")
+        for rule in src.get("permissions", {}).get(kind, []):
+            if rule in rules:
+                report.append(f"present  {kind} {rule}")
+            else:
+                rules.append(rule)
+                report.append(f"added    {kind} {rule}")
+        if not rules:
+            del perms[kind]
     return report
 
 
@@ -81,11 +91,17 @@ def remove(settings: dict, src: dict) -> list[str]:
     if src.get("statusLine") and (settings.get("statusLine") or {}).get("command") == src["statusLine"]["command"]:
         del settings["statusLine"]
         report.append("removed  statusLine")
-    allow = settings.get("permissions", {}).get("allow", [])
-    for rule in src.get("permissions", {}).get("allow", []):
-        if rule in allow:
-            allow.remove(rule)
-            report.append(f"removed  permission {rule}")
+    perms = settings.get("permissions", {})
+    for kind in ("allow", "ask"):
+        rules = perms.get(kind, [])
+        for rule in src.get("permissions", {}).get(kind, []) + (LEGACY_ALLOW if kind == "allow" else []):
+            if rule in rules:
+                rules.remove(rule)
+                report.append(f"removed  {kind} {rule}")
+        if kind in perms and not perms[kind]:
+            del perms[kind]
+    if "permissions" in settings and not settings["permissions"]:
+        del settings["permissions"]
     return report
 
 
@@ -95,7 +111,10 @@ def cmd_setup_hooks(args: list[str]) -> int:
     project = "--project" in args
     source = SOURCE
     if "--source" in args:
-        source = Path(args[args.index("--source") + 1])
+        i = args.index("--source")
+        if i + 1 >= len(args):
+            die("--source needs a file")
+        source = Path(args[i + 1])
     try:
         src = json.loads(source.read_text())
     except (OSError, ValueError) as e:

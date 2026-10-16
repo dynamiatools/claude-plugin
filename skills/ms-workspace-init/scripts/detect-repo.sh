@@ -5,7 +5,7 @@
 set -euo pipefail
 
 DIR="${1:?usage: detect-repo.sh <repo-dir>}"
-[[ -d "$DIR/.git" ]] || { echo "ERROR: '$DIR' is not a git repo" >&2; exit 1; }
+[[ -e "$DIR/.git" ]] || { echo "ERROR: '$DIR' is not a git repo" >&2; exit 1; }
 cd "$DIR"
 
 url="$(git remote get-url origin 2>/dev/null || true)"

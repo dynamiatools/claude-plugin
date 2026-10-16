@@ -1171,7 +1171,11 @@ class TestSetupHooks(Base):
         for c in ("ms-workspace guard", "ms-workspace context", "ms-workspace images capture"):
             self.assertIn(c, cmds)
         self.assertEqual(data["statusLine"]["command"], "ms-statusline")
-        self.assertIn("Bash(ms-workspace:*)", data["permissions"]["allow"])
+        self.assertNotIn("Bash(ms-workspace:*)", data["permissions"]["allow"], "the broad rule would auto-approve ship")
+        self.assertIn("Bash(ms-workspace status:*)", data["permissions"]["allow"])
+        for risky in ("ship", "clean", "env", "setup-hooks"):
+            self.assertIn(f"Bash(ms-workspace {risky}:*)", data["permissions"]["ask"])
+            self.assertNotIn(f"Bash(ms-workspace {risky}:*)", data["permissions"]["allow"])
         before = self.settings.read_text()
         r = self.setup()
         self.assertIn("Already up to date", r.stdout)
@@ -1211,8 +1215,20 @@ class TestSetupHooks(Base):
         data = self.load()
         self.assertEqual(self.commands(data), ["rtk hook claude"])
         self.assertNotIn("statusLine", data)
-        self.assertNotIn("Bash(ms-workspace:*)", data.get("permissions", {}).get("allow", []))
+        self.assertNotIn("permissions", data)
         self.assertIn("Nothing to remove", self.setup("--remove").stdout)
+
+    def test_the_old_broad_permission_is_replaced(self):
+        self.home.mkdir()
+        self.settings.write_text(json.dumps({"permissions": {"allow": ["Bash(ms-workspace:*)", "Bash(ls:*)"]}}))
+        r = self.setup()
+        self.assertIn("too broad", r.stdout)
+        allow = self.load()["permissions"]["allow"]
+        self.assertNotIn("Bash(ms-workspace:*)", allow)
+        self.assertIn("Bash(ls:*)", allow)
+
+    def test_source_option_needs_a_file(self):
+        self.assertNotEqual(self.setup("--source").returncode, 0)
 
     def test_invalid_json_is_never_overwritten(self):
         self.home.mkdir()
@@ -1282,6 +1298,8 @@ class TestPackaging(unittest.TestCase):
         data = json.loads((REPO / "settings" / "hooks.example.json").read_text())
         cmds = {h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]}
         self.assertEqual(cmds, {"ms-workspace guard", "ms-workspace context", "ms-workspace images capture"})
+        self.assertNotIn("Bash(ms-workspace:*)", data["permissions"]["allow"])
+        self.assertTrue({"Bash(ms-workspace ship:*)", "Bash(ms-workspace clean:*)"} <= set(data["permissions"]["ask"]))
         self.assertEqual(data["statusLine"]["command"], "ms-statusline")
 
     def test_example_workspace_config_parses(self):
@@ -1303,6 +1321,257 @@ class TestPackaging(unittest.TestCase):
             dry = run([str(REPO / "install.sh"), "--uninstall"], env=env)
             self.assertFalse((Path(tmp) / "b" / "ms-workspace").exists())
             self.assertEqual(dry.returncode, 0)
+
+
+# ------------------------------------------- review follow-ups: data-loss safety
+class TestUnintegratedWork(Base):
+    """clean and ship must never drop or skip agent branches that were not integrated."""
+
+    def setUp(self):
+        super().setUp()
+        self.d = self.ws.batch("b1", "lib")
+        self.assertOk(self.ws.ms("agent", "new", "b1", "t1", "lib"))
+        self.agent = self.d / ".agents" / "t1" / "lib"
+        self.ws.commit(self.agent, "agent work", {"agent.txt": "precious"})
+        self.ws.commit(self.d / "lib", "batch work", {"f.txt": "1"})
+
+    def test_clean_listing_flags_the_loose_agent_branch(self):
+        out = self.ws.ms("clean").stdout
+        self.assertIn("pending", out)
+        self.assertIn("agent/b1/t1", out)
+
+    def test_ship_refuses_and_names_the_branch(self):
+        r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("agent/b1/t1", r.stderr)
+        self.assertIn("integrate", r.stderr)
+        self.assertNotIn("batch work", self.ws.remote_log("lib"))
+        self.assertNotEqual(self.ws.ms("plan", "b1").returncode, 0, "the plan fails early too")
+
+    def test_clean_refuses_even_after_the_batch_branch_reached_the_remote(self):
+        self.ws.git(self.d / "lib", "push", "-q", "origin", "int/b1:next")   # int/b1 is now part of next
+        self.assertIn("pending", self.ws.ms("clean").stdout)
+        r = self.ws.ms("clean", "b1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not integrated", r.stderr)
+        self.assertTrue(self.agent.is_dir())
+        self.assertIn("agent/b1/t1", self.ws.git(self.ws.root / "lib", "branch", "--list"))
+
+    def test_integrating_makes_ship_and_clean_work(self):
+        self.assertOk(self.ws.ms("integrate", "b1"))
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e"))
+        self.assertIn("safe to clean", self.ws.ms("clean").stdout)
+        self.assertOk(self.ws.ms("clean", "b1"))
+        self.assertFalse(self.d.exists())
+
+    def test_force_is_the_explicit_way_to_discard(self):
+        self.assertOk(self.ws.ms("clean", "b1", "--force"))
+        self.assertNotIn("agent/b1/t1", self.ws.git(self.ws.root / "lib", "branch", "--list"))
+
+    def test_plan_lists_the_commits_that_would_be_sent(self):
+        self.assertOk(self.ws.ms("integrate", "b1"))
+        out = self.ws.ms("plan", "b1").stdout
+        self.assertIn("batch work", out)
+        self.assertIn("agent work", out)
+        self.assertRegex(out, r"\d+ files? changed")
+        self.assertNotIn("batch work", self.ws.remote_log("lib"))
+
+
+class TestIntegrateOptions(Base):
+    def test_unknown_option_is_rejected_instead_of_merging(self):
+        d = self.ws.batch("b1", "lib")
+        self.assertOk(self.ws.ms("agent", "new", "b1", "t1", "lib"))
+        self.ws.commit(d / ".agents" / "t1" / "lib", "w", {"x.txt": "1"})
+        r = self.ws.ms("integrate", "b1", "--dryrun")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("unknown option", r.stderr)
+        self.assertFalse((d / "lib" / "x.txt").exists())
+
+
+class TestRollbackAndNames(Base):
+    def test_failed_batch_new_leaves_nothing_behind(self):
+        r = self.ws.ms("batch", "new", "b1", "lib", "ghost")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((self.ws.root / ".batches" / "b1").exists())
+        self.assertNotIn("int/b1", self.ws.git(self.ws.root / "lib", "branch", "--list"))
+        self.assertNotIn(".batches", self.ws.git(self.ws.root / "lib", "worktree", "list"))
+        self.assertOk(self.ws.ms("batch", "new", "b1", "lib"))   # a rerun works
+
+    def test_failed_agent_new_rolls_back_only_its_own_work(self):
+        d = self.ws.batch("b1", "lib")
+        r = self.ws.ms("agent", "new", "b1", "t1", "lib", "app")   # app is not part of the batch
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((d / ".agents" / "t1").exists())
+        self.assertNotIn("agent/b1/t1", self.ws.git(self.ws.root / "lib", "branch", "--list"))
+        self.assertTrue((d / "lib").is_dir())
+        self.assertOk(self.ws.ms("agent", "new", "b1", "t1", "lib"))
+
+    def test_names_are_validated(self):
+        for bad in ("..", "a/b", "-x", ".hidden", "a b", ""):
+            with self.subTest(name=bad):
+                self.assertNotEqual(self.ws.ms("batch", "new", bad).returncode, 0)
+        self.ws.batch("b1")
+        self.assertNotEqual(self.ws.ms("agent", "new", "b1", "../x").returncode, 0)
+        self.assertNotEqual(self.ws.ms("clean", "..").returncode, 0)
+        self.assertTrue((self.ws.root / ".batches").is_dir())
+
+    def test_bad_numeric_options_give_errors_not_tracebacks(self):
+        for args in (("log", "-n"), ("log", "-n", "x"), ("images", "list", "-n", "abc")):
+            r = self.ws.ms(*args)
+            self.assertNotEqual(r.returncode, 0, args)
+            self.assertNotIn("Traceback", r.stderr, args)
+
+
+class TestEnvSetupFailure(Base):
+    def test_failure_shows_the_command_output(self):
+        self.ws.set_toml(DEFAULT_TOML.replace('[repos.lib]\nbase = "next"', '[repos.lib]\nbase = "next"\nsetup = "echo broken-dependency >&2; exit 4"'))
+        self.ws.batch("b1", "lib")
+        r = self.ws.ms("env", "b1", "--setup")
+        self.assertIn("setup FAILED", r.stderr)
+        self.assertIn("broken-dependency", r.stderr)
+
+
+class TestTrustWrite(Base):
+    def test_other_keys_survive_and_symlinks_are_kept(self):
+        real = self.ws.tmp / "real-claude.json"
+        real.write_text(json.dumps({"theme": "dark", "projects": {"/old": {"hasTrustDialogAccepted": True}}}))
+        link = self.ws.home / ".claude.json"
+        link.symlink_to(real)
+        d = self.ws.batch("b1", "lib")
+        self.assertOk(self.ws.ms("env", "b1", "--trust"))
+        self.assertTrue(link.is_symlink(), "the symlink must not be replaced by a regular file")
+        data = json.loads(real.read_text())
+        self.assertEqual(data["theme"], "dark")
+        self.assertTrue(data["projects"]["/old"]["hasTrustDialogAccepted"])
+        self.assertTrue(data["projects"][str(d / "lib")]["hasTrustDialogAccepted"])
+        self.assertEqual(list(self.ws.tmp.glob("*.tmp")), [])
+
+
+class TestPrMode(Base):
+    PR_TOML = DEFAULT_TOML.replace('[repos.lib]\nbase = "next"', '[repos.lib]\nbase = "next"\npush = "pr"')
+
+    def fake_path(self, with_gh):
+        bin_dir = self.ws.tmp / "fakebin"
+        bin_dir.mkdir(exist_ok=True)
+        for tool in ("git", "python3", "bash"):
+            real = subprocess.run(["which", tool], capture_output=True, text=True).stdout.strip()
+            (bin_dir / tool).unlink(missing_ok=True)
+            (bin_dir / tool).symlink_to(real)
+        if with_gh:
+            gh = bin_dir / "gh"
+            gh.write_text(f'#!/bin/sh\necho "$@" >> "{self.ws.tmp}/gh-calls"\n')
+            gh.chmod(0o755)
+        return str(bin_dir)
+
+    def setUp(self):
+        super().setUp()
+        self.ws.set_toml(self.PR_TOML)
+        d = self.ws.batch("b1", "lib")
+        self.ws.commit(d / "lib", "feature", {"f.txt": "1"})
+
+    def test_pr_mode_pushes_the_branch_and_opens_a_pr(self):
+        r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e", env={"PATH": self.fake_path(True)})
+        self.assertOk(r)
+        self.assertIn("int/b1", self.ws.git(self.ws.tmp / "remote-lib.git", "branch", "--list"))
+        self.assertNotIn("feature", self.ws.remote_log("lib"), "pr mode must not touch the base branch")
+        call = (self.ws.tmp / "gh-calls").read_text()
+        self.assertIn("pr create --base next --head int/b1", call)
+
+    def test_missing_gh_stops_before_anything_is_pushed(self):
+        r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e", env={"PATH": self.fake_path(False)})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("gh", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertNotIn("int/b1", self.ws.git(self.ws.tmp / "remote-lib.git", "branch", "--list"))
+
+
+# ------------------------------------------------------- guard: fail closed
+class TestGuardHardening(Base):
+    def guard(self, command, cwd):
+        return self.ws.ms("guard", input=json.dumps({"tool_input": {"command": command}, "cwd": str(cwd)}))
+
+    def test_a_broken_workspace_toml_does_not_open_the_gate(self):
+        d = self.ws.batch("b1")
+        (self.ws.root / "workspace.toml").write_text("this is [[ not toml")
+        self.assertEqual(self.guard("git push origin next", d / "lib").returncode, 2)
+        self.assertEqual(self.guard("ls", d / "lib").returncode, 0)
+
+    def test_evasion_forms_are_blocked_inside_a_batch(self):
+        d = self.ws.batch("b1")
+        for cmd in ("git -P push", "git -C/tmp/x push", '"git" push', "git subtree push --prefix=a b main", "git send-pack origin x",
+                    "FOO=1 git push", "sudo git push", "bash -c 'git push origin x'", 'eval "git push"', "git --no-pager push",
+                    "echo hi | git push", "ls; git push", "/usr/bin/git push", "git -c user.name=x push", "gh pr merge 3",
+                    "gh api repos/o/r/issues -f title=x", "gh api -X POST repos/o/r/issues", "gh release create v1",
+                    "ms-workspace setup-hooks", "ms-workspace env b1 --setup"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.guard(cmd, d / "lib").returncode, 2, cmd)
+
+    def test_reaching_into_a_batch_from_the_workspace_root_is_blocked(self):
+        d = self.ws.batch("b1")
+        self.assertEqual(self.guard(f"cd {d}/lib && git push", self.ws.root).returncode, 2)
+        self.assertEqual(self.guard("cd .batches/b1/lib && git push", self.ws.root).returncode, 2)
+        self.assertEqual(self.guard("git push origin next", self.ws.root / "lib").returncode, 0, "normal checkouts stay free")
+
+    def test_read_only_and_harmless_commands_pass(self):
+        d = self.ws.batch("b1")
+        for cmd in ("git status", "git log --oneline", "git pull", "git fetch", "git commit -m 'fix push handling'", "git diff | head",
+                    "gh pr view 3", "gh api repos/o/r/pulls", "gh issue view 1", "echo git push", "grep -r push src",
+                    "git checkout -b feature/push-fix", "ms-workspace test t0", "ms-workspace env b1", "unterminated 'quote"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.guard(cmd, d / "lib").returncode, 0, cmd)
+
+    def test_unparseable_risky_commands_fail_closed(self):
+        d = self.ws.batch("b1")
+        self.assertEqual(self.guard("git push 'oops", d / "lib").returncode, 2)
+
+
+class TestPythonGate(unittest.TestCase):
+    def setUp(self):
+        import sys
+        sys.path.insert(0, str(REPO / "lib"))
+        from ms_workspace import compat
+        self.compat = compat
+
+    def test_old_python_only_keeps_the_guard_alive(self):
+        import contextlib, io
+        old = (3, 9)
+        self.assertIsNone(self.compat.check(["guard"], old))
+        self.assertEqual(self.compat.check(["context"], old), 0)
+        self.assertEqual(self.compat.check(["images", "capture"], old), 0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.compat.check(["ship", "b1"], old), 1)
+            self.assertEqual(self.compat.check([], old), 1)
+        self.assertIn("Python >= 3.11", err.getvalue())
+
+    def test_current_python_proceeds(self):
+        self.assertIsNone(self.compat.check(["ship"], (3, 11)))
+        self.assertIsNone(self.compat.check(["ship"], (3, 14)))
+
+
+class TestUsageEdgeCases(Base):
+    def test_null_reset_time_is_treated_as_no_data(self):
+        self.ws.cache.mkdir(exist_ok=True)
+        (self.ws.cache / "usage.json").write_text(json.dumps({
+            "captured_at": int(time.time()), "five_hour": {"used_percentage": 50, "resets_at": None}, "seven_day": None}))
+        r = self.ws.ms("usage", "--check")
+        self.assertEqual(r.returncode, 3)
+        self.assertNotIn("Traceback", r.stderr)
+
+
+class TestRepoHygiene(unittest.TestCase):
+    def test_no_bytecode_or_state_is_tracked(self):
+        tracked = run(["git", "ls-files"], cwd=REPO).stdout.splitlines()
+        self.assertEqual([f for f in tracked if f.endswith(".pyc") or "__pycache__" in f], [])
+        self.assertIn("__pycache__/", (REPO / ".gitignore").read_text())
+
+    def test_no_stale_references_in_skills(self):
+        init = (REPO / "skills" / "ms-workspace-init" / "SKILL.md").read_text()
+        self.assertNotIn(".claude/worktrees", init)
+        self.assertNotIn("`root`", init.replace("Do not write a `root` key", ""))
+        for path in (REPO / "skills").glob("*/SKILL.md"):
+            head = path.read_text().split("\n---\n", 1)[0]
+            self.assertNotIn("allowed-tools: Bash(ms-workspace:*)", head, f"{path.parent.name} auto-approves every subcommand")
 
 
 if __name__ == "__main__":

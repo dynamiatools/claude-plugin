@@ -53,7 +53,28 @@
   },
   "permissions": {
     "allow": [
-      "Bash(ms-workspace:*)"
+      "Bash(ms-workspace status:*)",
+      "Bash(ms-workspace context:*)",
+      "Bash(ms-workspace log:*)",
+      "Bash(ms-workspace affected:*)",
+      "Bash(ms-workspace usage:*)",
+      "Bash(ms-workspace insights:*)",
+      "Bash(ms-workspace tokens:*)",
+      "Bash(ms-workspace memory:*)",
+      "Bash(ms-workspace doctor:*)",
+      "Bash(ms-workspace images:*)",
+      "Bash(ms-workspace claude-md:*)",
+      "Bash(ms-workspace plan:*)",
+      "Bash(ms-workspace test:*)",
+      "Bash(ms-workspace integrate:*)",
+      "Bash(ms-workspace batch new:*)",
+      "Bash(ms-workspace agent new:*)"
+    ],
+    "ask": [
+      "Bash(ms-workspace ship:*)",
+      "Bash(ms-workspace clean:*)",
+      "Bash(ms-workspace env:*)",
+      "Bash(ms-workspace setup-hooks:*)"
     ]
   }
 }

@@ -2,7 +2,7 @@
 name: ms-integrate
 description: Merges the agent branches of a batch into its integration branch, detects conflicts before they happen, and runs the incremental tests (t1). Use after parallel agents finish, or when the user asks to join, merge or validate the work of a batch locally.
 argument-hint: "<batch-name>"
-allowed-tools: Bash(ms-workspace:*)
+allowed-tools: Bash(ms-workspace usage:*) Bash(ms-workspace integrate:*) Bash(ms-workspace test:*) Bash(ms-workspace memory:*) Bash(ms-workspace log:*)
 ---
 
 # ms-integrate

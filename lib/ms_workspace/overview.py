@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from .core import Workspace, batch_repos, die, git, git_ok
+from .core import int_arg, Workspace, batch_repos, die, git, git_ok
 from .usage import cmd_usage, snapshot_path
 
 
@@ -18,7 +18,7 @@ def cmd_log(ws: Workspace, args: list[str]) -> int:
     it = iter(args)
     for a in it:
         if a == "-n":
-            n = int(next(it))
+            n = int_arg(it, "-n", 20)
         elif a == "--day":
             day = next(it)
         elif a == "--action":
@@ -138,6 +138,8 @@ def cmd_doctor(ws: Workspace | None) -> int:
             want("node"); want("pnpm")
         if "npm" in stacks:
             want("node")
+        if "yarn" in stacks:
+            want("node"); want("yarn")
         if "go" in stacks:
             want("go")
         if "rust" in stacks:

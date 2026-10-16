@@ -2,7 +2,7 @@
 name: ms-batch
 description: Starts or inspects a batch of local work across the repos of a workspace. Creates isolated worktrees (one per repo, optionally one per agent) so changes never touch shared checkouts and nothing is pushed. Use when the user wants to start a feature or fix that spans repos, run several agents in parallel safely, or see which batches exist.
 argument-hint: "[batch-name]"
-allowed-tools: Bash(ms-workspace:*)
+allowed-tools: Bash(ms-workspace status:*) Bash(ms-workspace usage:*) Bash(ms-workspace batch new:*) Bash(ms-workspace agent new:*) Bash(ms-workspace memory:*)
 ---
 
 # ms-batch

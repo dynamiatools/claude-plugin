@@ -1,7 +1,6 @@
 # workspace.toml - read by ms-workspace and the ms-* skills.
-# Paths use "~" so the same file works on any machine.
+# The workspace root is the folder that holds this file.
 name = "example"
-root = "~/IdeaProjects/example"
 tasks = "local"              # "local" (TASKS.md per batch) or "github" (one issue per batch)
 log_retention_days = 14      # daily action logs older than this are deleted
 images_retention_days = 30   # archived chat images older than this are deleted

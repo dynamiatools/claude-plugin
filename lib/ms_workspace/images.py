@@ -12,7 +12,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .core import Workspace, die
+from .core import int_arg, Workspace, die
 
 EXT = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
 
@@ -171,7 +171,7 @@ def list_images(ws: Workspace, args: list[str]) -> int:
     it = iter(args)
     for a in it:
         if a == "-n":
-            n = int(next(it))
+            n = int_arg(it, "-n", 10)
         elif a == "--day":
             day = next(it)
         else:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,26 @@ from .core import (MsError, Workspace, ahead_of_base, base_ref, batch_of_cwd, ba
 
 def eprint(*a):
     print(*a, file=sys.stderr)
+
+
+NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def valid_name(kind: str, name: str) -> str:
+    if not NAME.match(name or "") or ".." in name:
+        die(f"invalid {kind} name '{name}': use letters, digits, '.', '_' and '-' (no slashes, not starting with a symbol)")
+    return name
+
+
+def agent_branches(ws: Workspace, batch: str, repo: str) -> list[str]:
+    wt = ws.batch_dir / batch / repo
+    return [b for b in git_out(wt, "for-each-ref", "--format=%(refname:short)", f"refs/heads/agent/{batch}/").splitlines() if b]
+
+
+def unintegrated(ws: Workspace, batch: str, repo: str) -> list[str]:
+    """Agent branches of the batch whose commits are not part of int/<batch> yet."""
+    wt = ws.batch_dir / batch / repo
+    return [b for b in agent_branches(ws, batch, repo) if not git_ok(wt, "merge-base", "--is-ancestor", b, f"int/{batch}")]
 
 
 # ------------------------------------------------------------ environment files
@@ -42,14 +63,18 @@ def copy_env(ws: Workspace, repo: str, dst: Path) -> None:
 
 
 def trust_dir(directory: Path) -> None:
-    """Mark a directory as trusted so Claude skips the 'trust this folder' dialog."""
+    """Mark a directory as trusted so Claude skips the 'trust this folder' dialog (atomic write, symlink-safe)."""
     cfg = Path(os.environ.get("HOME", "~")).expanduser() / ".claude.json"
     if not cfg.is_file():
         return
+    real = Path(os.path.realpath(cfg))
     try:
-        data = json.loads(cfg.read_text())
+        data = json.loads(real.read_text())
         data.setdefault("projects", {}).setdefault(str(directory), {})["hasTrustDialogAccepted"] = True
-        cfg.write_text(json.dumps(data, indent=2))
+        tmp = real.with_name(f"{real.name}.ms-{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, indent=2))
+        shutil.copymode(real, tmp)
+        os.replace(tmp, real)
     except (OSError, ValueError):
         pass
 
@@ -89,33 +114,50 @@ def cmd_env(ws: Workspace, args: list[str]) -> int:
             else:
                 ws.log("env.setup", "fail", repo, batch, cmd)
                 eprint(f"    setup FAILED: {cmd}")
+                eprint("\n".join("      " + l for l in (r.stdout + r.stderr).splitlines()[-15:]))
     ws.log("env", "ok", "", batch, f"setup={int(setup)} trust={int(trust)}")
     return 0
 
 
 # ----------------------------------------------------------------------- batch
+def _rollback(ws: Workspace, created: list[tuple[str, Path, str]], directory: Path | None) -> None:
+    """Undo the worktrees and branches created by a failed command so a rerun starts clean."""
+    for repo, wt, branch in reversed(created):
+        git(ws.root / repo, "worktree", "remove", "--force", str(wt))
+        git(ws.root / repo, "branch", "-D", branch)
+    if directory is not None:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 def cmd_batch(ws: Workspace, args: list[str]) -> int:
     if not args or args[0] != "new" or len(args) < 2:
         die("usage: batch new <name> [repo...]")
-    name, repos = args[1], args[2:] or ws.repo_names()
+    name, repos = valid_name("batch", args[1]), args[2:] or ws.repo_names()
     directory = ws.batch_dir / name
     if directory.exists():
         die(f"batch '{name}' already exists at {directory}")
     directory.mkdir(parents=True)
-    for r in repos:
-        src, base = ws.root / r, ws.base(r)
-        if not (src / ".git").exists():
-            ws.log("batch.new", "error", r, name, f"repo not found at {src}")
-            die(f"repo '{r}' not found at {src}")
-        if not git_ok(src, "fetch", "origin", base, "--quiet"):
-            eprint(f"warn: could not fetch {r}/{base} (using local ref)")
-        start = f"origin/{base}" if git_ok(src, "rev-parse", "--verify", "--quiet", f"origin/{base}") else base
-        if not git_ok(src, "worktree", "add", "--no-track", "-b", f"int/{name}", str(directory / r), start):
-            ws.log("batch.new", "error", r, name, "worktree add failed")
-            die(f"could not create worktree for {r} (branch int/{name} may exist)")
-        ws.log("batch.new", "ok", r, name, f"int/{name} from {start}")
-        print(f"  {r} -> {directory / r} (int/{name} from {start})")
-        copy_env(ws, r, directory / r)
+    created: list[tuple[str, Path, str]] = []
+    try:
+        for r in repos:
+            src, base = ws.root / r, ws.base(r)
+            if r not in ws.repo_names() or not (src / ".git").exists():
+                ws.log("batch.new", "error", r, name, f"repo not found at {src}")
+                die(f"repo '{r}' not found at {src}")
+            if not git_ok(src, "fetch", "origin", base, "--quiet"):
+                eprint(f"warn: could not fetch {r}/{base} (using local ref)")
+            start = f"origin/{base}" if git_ok(src, "rev-parse", "--verify", "--quiet", f"origin/{base}") else base
+            res = git(src, "worktree", "add", "--no-track", "-b", f"int/{name}", str(directory / r), start)
+            if res.returncode != 0:
+                ws.log("batch.new", "error", r, name, "worktree add failed")
+                die(f"could not create worktree for {r} (branch int/{name} may exist): {res.stderr.strip()}")
+            created.append((r, directory / r, f"int/{name}"))
+            ws.log("batch.new", "ok", r, name, f"int/{name} from {start}")
+            print(f"  {r} -> {directory / r} (int/{name} from {start})")
+            copy_env(ws, r, directory / r)
+    except MsError:
+        _rollback(ws, created, directory)
+        raise
     lines = [f"# Batch: {name}", "", f"Repos: {' '.join(repos)}", "", "## Tasks"]
     for r in repos:
         if ws.task_mode(r) == "github":
@@ -131,18 +173,26 @@ def cmd_agent(ws: Workspace, args: list[str]) -> int:
     if len(args) < 3 or args[0] != "new":
         die("usage: agent new <batch> <task> [repo...]")
     batch = need_batch(ws, args[1])
-    task = args[2]
+    task = valid_name("task", args[2])
     repos = args[3:] or batch_repos(ws, batch)
-    for r in repos:
-        main_wt = ws.batch_dir / batch / r
-        wt = ws.batch_dir / batch / ".agents" / task / r
-        if not main_wt.is_dir():
-            die(f"repo '{r}' is not part of batch '{batch}'")
-        if not git_ok(main_wt, "worktree", "add", "--no-track", "-b", f"agent/{batch}/{task}", str(wt), f"int/{batch}"):
-            die(f"could not create agent worktree for {r} (branch agent/{batch}/{task} may exist)")
-        ws.log("agent.new", "ok", r, batch, f"agent/{batch}/{task}")
-        print(f"  {r} -> {wt} (agent/{batch}/{task})")
-        copy_env(ws, r, wt)
+    created: list[tuple[str, Path, str]] = []
+    try:
+        for r in repos:
+            main_wt = ws.batch_dir / batch / r
+            wt = ws.batch_dir / batch / ".agents" / task / r
+            if not main_wt.is_dir():
+                die(f"repo '{r}' is not part of batch '{batch}'")
+            res = git(main_wt, "worktree", "add", "--no-track", "-b", f"agent/{batch}/{task}", str(wt), f"int/{batch}")
+            if res.returncode != 0:
+                die(f"could not create agent worktree for {r} (branch agent/{batch}/{task} may exist): {res.stderr.strip()}")
+            created.append((r, wt, f"agent/{batch}/{task}"))
+            ws.log("agent.new", "ok", r, batch, f"agent/{batch}/{task}")
+            print(f"  {r} -> {wt} (agent/{batch}/{task})")
+            copy_env(ws, r, wt)
+    except MsError:
+        _rollback(ws, created, None)
+        shutil.rmtree(ws.batch_dir / batch / ".agents" / task, ignore_errors=True)
+        raise
     return 0
 
 
@@ -169,6 +219,9 @@ def cmd_integrate(ws: Workspace, args: list[str]) -> int:
     if not args:
         die("usage: integrate <batch> [--dry-run]")
     batch = need_batch(ws, args[0])
+    unknown = [a for a in args[1:] if a != "--dry-run"]
+    if unknown:
+        die(f"integrate: unknown option {unknown[0]}")
     dry = "--dry-run" in args[1:]
     conflict = False
     for r in topo(ws, batch_repos(ws, batch)):
@@ -225,8 +278,14 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
         wt, base = ws.batch_dir / batch / r, ws.base(r)
         if git_out(wt, "status", "--porcelain"):
             die(f"{r}: uncommitted changes in int/{batch}")
+        pending = unintegrated(ws, batch, r)
+        if pending:
+            die(f"{r}: agent branches not integrated into int/{batch}: {', '.join(pending)}; "
+                f"run 'ms-workspace integrate {batch}' first (or 'clean --force' to discard them)")
         if base in (ws.repo_cfg(r).get("release") or []):
             die(f"{r}: base '{base}' is a release branch; ship never targets those")
+        if (ws.repo_cfg(r).get("push") or "direct") == "pr" and not shutil.which("gh"):
+            die(f"{r}: push = \"pr\" needs the GitHub CLI (gh) in PATH; nothing was pushed")
         if not git_ok(ws.root / r, "fetch", "origin", base, "--quiet"):
             eprint(f"warn: could not fetch {r}/{base}")
         if ahead_of_base(wt, base) == 0:
@@ -237,10 +296,20 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
         print(f"Nothing to ship in batch '{batch}'.")
         return 0
 
-    print(f"Plan for batch '{batch}':")
+    print(f"Plan for batch '{batch}' (this is what would be sent):")
     for r in repos:
+        wt, base = ws.batch_dir / batch / r, ws.base(r)
         mode = ws.repo_cfg(r).get("push") or "direct"
-        print(f"  {r}: int/{batch} -> {ws.base(r)} ({mode}, {ahead_of_base(ws.batch_dir / batch / r, ws.base(r))} commits)")
+        ref = base_ref(wt, base)
+        n = ahead_of_base(wt, base)
+        print(f"  {r}: int/{batch} -> {base} ({mode}, {n} commits)")
+        for l in git_out(wt, "log", "--format=%h %s", "--max-count=10", f"{ref}..HEAD").splitlines():
+            print(f"      {l}")
+        if n > 10:
+            print(f"      ... and {n - 10} more")
+        stat = git_out(wt, "diff", "--shortstat", f"{ref}...HEAD")
+        if stat:
+            print(f"      {stat}")
     if not yes:
         print("(plan only; pass --yes to run: sync, t1, e2e, push)")
         return 0
@@ -270,10 +339,14 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
         mode = ws.repo_cfg(r).get("push") or "direct"
         if mode == "pr":
             p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"int/{batch}"])
-            if p.returncode == 0:
-                p = subprocess.run(["gh", "pr", "create", "--base", base, "--head", f"int/{batch}", "--fill"], cwd=wt)
             if p.returncode != 0:
-                die(f"{r}: could not open the PR")
+                die(f"{r}: could not push int/{batch}")
+            try:
+                p = subprocess.run(["gh", "pr", "create", "--base", base, "--head", f"int/{batch}", "--fill"], cwd=wt)
+            except OSError as e:
+                die(f"{r}: int/{batch} was pushed but 'gh' failed to start ({e}); open the PR by hand")
+            if p.returncode != 0:
+                die(f"{r}: int/{batch} was pushed but the PR could not be opened; open it by hand (or rerun ship after fixing gh)")
         else:
             p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"int/{batch}:{base}"])
             if p.returncode != 0:
@@ -286,8 +359,9 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
 
 # ------------------------------------------------------------------------ clean
 def _merged(ws: Workspace, batch: str, repo: str) -> bool:
+    """int/<batch> is part of its base branch AND every agent branch is part of int/<batch>."""
     wt = ws.batch_dir / batch / repo
-    return git_ok(wt, "merge-base", "--is-ancestor", "HEAD", base_ref(wt, ws.base(repo)))
+    return git_ok(wt, "merge-base", "--is-ancestor", "HEAD", base_ref(wt, ws.base(repo))) and not unintegrated(ws, batch, repo)
 
 
 def cmd_clean(ws: Workspace, args: list[str]) -> int:
@@ -298,13 +372,18 @@ def cmd_clean(ws: Workspace, args: list[str]) -> int:
             print("(no batches)")
             return 0
         for b in sorted(p.name for p in ws.batch_dir.iterdir() if p.is_dir()):
+            loose = [x for r in batch_repos(ws, b) for x in unintegrated(ws, b, r)]
             ok = all(_merged(ws, b, r) for r in batch_repos(ws, b))
-            print(f"{b}: {'merged (safe to clean)' if ok else 'pending'}")
+            print(f"{b}: {'merged (safe to clean)' if ok else 'pending'}"
+                  + (f" (agent branches not integrated: {', '.join(loose)})" if loose else ""))
         return 0
     batch = need_batch(ws, names[-1])
     repos = batch_repos(ws, batch)
     if not force:
         for r in repos:
+            pending = unintegrated(ws, batch, r)
+            if pending:
+                die(f"{r}: agent branches not integrated into int/{batch}: {', '.join(pending)} (integrate them, or use --force to discard)")
             if not _merged(ws, batch, r):
                 die(f"{r}: int/{batch} is not merged into {ws.base(r)} yet (use --force to discard)")
     flags = ["--force"] if force else []

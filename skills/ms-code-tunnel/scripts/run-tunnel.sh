@@ -24,28 +24,28 @@ fi
 
 mkdir -p "$STATE_DIR"
 
-# 1) Kill any previous instance so tunnels don't pile up.
+# 1) Stop the instance this skill started before (only ours, found through the saved PID), so tunnels don't pile up.
+#    It runs in its own session/process group, so the whole group is stopped, including the cloudflared child.
 if [[ -f "$PID_FILE" ]]; then
   OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
   if [[ -n "${OLD_PID:-}" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
-    kill "$OLD_PID" 2>/dev/null || true
+    kill -- "-$OLD_PID" 2>/dev/null || kill "$OLD_PID" 2>/dev/null || true
     for _ in $(seq 1 10); do
       kill -0 "$OLD_PID" 2>/dev/null || break
       sleep 0.3
     done
-    kill -9 "$OLD_PID" 2>/dev/null || true
+    kill -9 -- "-$OLD_PID" 2>/dev/null || kill -9 "$OLD_PID" 2>/dev/null || true
   fi
   rm -f "$PID_FILE"
 fi
-# Safety net in case the pid file was lost but a process is still running.
-pkill -f "@dynamia-tools/remote-code-viewer" 2>/dev/null || true
 
 : > "$LOG_FILE"
 
 # 2) Launch the new tunnel fully detached from this shell.
 (
   cd "$TARGET_DIR"
-  setsid nohup npx @dynamia-tools/remote-code-viewer --tunnel \
+  DETACH=(); command -v setsid >/dev/null 2>&1 && DETACH=(setsid)   # util-linux only; nohup alone is enough elsewhere
+  "${DETACH[@]}" nohup npx @dynamia-tools/remote-code-viewer --tunnel \
     >"$LOG_FILE" 2>&1 < /dev/null &
   echo $! > "$PID_FILE"
 )

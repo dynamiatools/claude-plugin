@@ -39,7 +39,7 @@ what cannot be detected, and keep every question short.
    bash ~/.claude/skills/ms-workspace-init/scripts/detect-repo.sh "<root>/<repo>"
    ```
    It returns the remote URL, default branch, suggested base branch (`next` if
-   it exists), stacks (maven, gradle, pnpm, npm, go, python, rust) and a
+   it exists), stacks (maven, gradle, pnpm, npm, yarn, go, python, rust) and a
    suggested test command.
 
 5. **Show one compact table** (repo, base, stacks, test command) and ask only
@@ -54,7 +54,7 @@ what cannot be detected, and keep every question short.
 
 6. **Write `<root>/workspace.toml`** following
    `~/.claude/skills/ms-workspace-init/references/workspace.example.toml`.
-   - Keep `root` as `~/...` so the file works on another machine.
+   - Do not write a `root` key: the workspace root is simply the folder that holds `workspace.toml`, so the file works on any machine.
    - For stacks with module-level selection, set `test.affected` (Maven:
      `-pl {modules} -amd`; pnpm: `pnpm --filter "...[origin/<base>]" test`).
      Otherwise reuse the full test command.
@@ -72,9 +72,7 @@ what cannot be detected, and keep every question short.
    `workspace.toml`. Claude Code loads this file automatically from any repo
    below the workspace root.
 
-8. **Ignore generated folders**: make sure each repo's `.gitignore` (or
-   `.git/info/exclude`, preferred, so nothing is committed) has
-   `.claude/worktrees/`.
+8. **No `.gitignore` changes are needed**: batches (`.batches/`) and state (`.ms-workspace/`: logs, memory, archived images) live in the workspace root, outside every repo. Mention that the archived images can contain sensitive data.
 
 9. **Report**: path of `workspace.toml`, the dependency order, what was
    cloned, and what was left blank (so the user knows what to fill in later).

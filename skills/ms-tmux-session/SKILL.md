@@ -14,7 +14,7 @@ invoked by Claude, so this skill replaces it with `AskUserQuestion`).
 1. **List the project folders** (direct children only). The base directory is
    `$CLAUDE_TMUX_BASE_DIR`, defaulting to `~/IdeaProjects`:
    ```bash
-   find "${CLAUDE_TMUX_BASE_DIR:-$HOME/IdeaProjects}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+   find "${CLAUDE_TMUX_BASE_DIR:-$HOME/IdeaProjects}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort
    ```
    If there are none, tell the user and stop.
 

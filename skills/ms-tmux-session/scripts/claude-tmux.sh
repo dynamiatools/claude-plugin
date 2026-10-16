@@ -30,13 +30,18 @@ if [ -z "$CHOSEN" ]; then
     exit 1
 fi
 
+case "$CHOSEN" in
+    */*|.*|-*|"") echo "Error: '$CHOSEN' is not a plain folder name." >&2; exit 1 ;;
+esac
+
 if [ ! -d "$BASE_DIR/$CHOSEN" ]; then
     echo "Error: '$CHOSEN' does not exist inside $BASE_DIR." >&2
     exit 1
 fi
 
 SUB_DIR="$BASE_DIR/$CHOSEN"
-SESSION_NAME="$CHOSEN"
+# tmux targets cannot contain '.' or ':'; keep the session name to safe characters.
+SESSION_NAME="$(printf '%s' "$CHOSEN" | tr -c 'A-Za-z0-9_-' '-')"
 CLAUDE_CONFIG="$HOME/.claude.json"
 
 if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -46,14 +51,22 @@ fi
 
 # Mark the directory as trusted so Claude skips the "trust this folder" dialog.
 if [ -f "$CLAUDE_CONFIG" ]; then
-    tmp="$(mktemp)"
-    jq --arg dir "$SUB_DIR" \
+    # Write next to the real file and rename, so a concurrent writer never sees a truncated file
+    # and a symlinked ~/.claude.json keeps pointing at its target.
+    real="$(readlink -f "$CLAUDE_CONFIG" 2>/dev/null || echo "$CLAUDE_CONFIG")"
+    tmp="$real.ms-$$.tmp"
+    if jq --arg dir "$SUB_DIR" \
         '.projects[$dir] = ((.projects[$dir] // {}) + {"hasTrustDialogAccepted": true})' \
-        "$CLAUDE_CONFIG" > "$tmp" && mv "$tmp" "$CLAUDE_CONFIG"
+        "$real" > "$tmp"; then
+        chmod --reference="$real" "$tmp" 2>/dev/null || true
+        mv "$tmp" "$real"
+    else
+        rm -f "$tmp"
+    fi
 fi
 
-tmux new-session -d -s "$SESSION_NAME" -n "$CHOSEN" -c "$SUB_DIR" \
-    "claude --name \"$(hostname):$CHOSEN\"; tmux kill-session -t \"$SESSION_NAME\""
+printf -v CLAUDE_CMD 'claude --name %q; tmux kill-session -t %q' "$(hostname):$CHOSEN" "$SESSION_NAME"
+tmux new-session -d -s "$SESSION_NAME" -n "$SESSION_NAME" -c "$SUB_DIR" "$CLAUDE_CMD"
 
 # Enable Remote Control in the background once Claude shows its prompt, so the
 # session appears in claude.ai/code without manual steps.

@@ -21,6 +21,7 @@ Usage:
   ms-workspace test t2 [batch]               end-to-end command from [e2e] in workspace.toml
   ms-workspace integrate <batch> [--dry-run] merge agent branches into int/<batch> (conflicts detected first)
   ms-workspace ship <batch> [--yes] [--skip-e2e]   sync with base, test, push (plan only without --yes)
+  ms-workspace plan <batch>                  same as `ship` without --yes: shows what would be sent, changes nothing
   ms-workspace clean [<batch>] [--force]     list batches, or remove one that is already merged
   ms-workspace log [-n N] [--day YYYY-MM-DD] [--action A]   show recent actions
   ms-workspace context                       ~15-line briefing (for a SessionStart hook)
@@ -85,7 +86,7 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     table = {
         "batch": batches.cmd_batch, "agent": batches.cmd_agent, "affected": batches.cmd_affected,
         "env": batches.cmd_env, "integrate": batches.cmd_integrate, "ship": batches.cmd_ship,
-        "clean": batches.cmd_clean, "test": runner.cmd_test, "log": overview.cmd_log,
+        "clean": batches.cmd_clean, "plan": lambda ws, a: batches.cmd_ship(ws, a[:1]), "test": runner.cmd_test, "log": overview.cmd_log,
         "status": overview.cmd_status, "claude-md": claude_md.cmd_claude_md,
         "memory": memory.cmd_memory, "insights": insights.cmd_insights, "tokens": tokens.cmd_tokens,
     }

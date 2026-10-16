@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import time
-import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -52,6 +51,7 @@ class Workspace:
     def __init__(self, root: Path):
         self.root = root
         self.cfg_path = root / "workspace.toml"
+        import tomllib  # lazy: only `guard` has to work on Pythons older than 3.11
         try:
             self.cfg = tomllib.loads(self.cfg_path.read_text())
         except (OSError, tomllib.TOMLDecodeError) as e:
@@ -231,3 +231,12 @@ def modules_of(directory, files: list[str]) -> list[str]:
             d = os.path.dirname(d) or "."
         mods.add(d)
     return sorted(mods)
+
+
+def int_arg(it, flag: str, default: int) -> int:
+    """Next value of an iterator as an int, with a clear error instead of a traceback."""
+    raw = next(it, None)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        die(f"{flag} needs a number" + (f" (got '{raw}')" if raw is not None else ""))
