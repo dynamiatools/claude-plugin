@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from .core import (MsError, Workspace, ahead_of_base, base_ref, batch_of_cwd, batch_repos, changed_files, die, git,
@@ -333,7 +334,16 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
         if run_e2e(ws, batch) != 0:
             ws.log("ship", "fail", "", batch, "t2 failed")
             die("e2e failed; nothing was pushed")
-    # 3) push
+    # 3) push. Record what the base branch pointed to before and after, so the ship can be undone.
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    record_path = ws.state_dir / "ship" / f"{batch}-{stamp}.json"
+    record = {"batch": batch, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "repos": {}}
+    for r in repos:
+        wt, base = ws.batch_dir / batch / r, ws.base(r)
+        record["repos"][r] = {"base": base, "mode": ws.repo_cfg(r).get("push") or "direct", "branch": f"int/{batch}",
+                              "before": git_out(wt, "rev-parse", f"origin/{base}"), "after": git_out(wt, "rev-parse", "HEAD"), "pushed": False}
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(json.dumps(record, indent=2))
     for r in repos:
         wt, base = ws.batch_dir / batch / r, ws.base(r)
         mode = ws.repo_cfg(r).get("push") or "direct"
@@ -351,9 +361,12 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
             p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"int/{batch}:{base}"])
             if p.returncode != 0:
                 die(f"{r}: push to {base} rejected (base moved again? run ship again)")
-        ws.log("ship", "ok", r, batch, f"int/{batch} -> {base} ({mode})")
+        record["repos"][r]["pushed"] = True
+        record_path.write_text(json.dumps(record, indent=2))
+        ws.log("ship", "ok", r, batch, f"int/{batch} -> {base} ({mode})",
+               before=record["repos"][r]["before"][:12], after=record["repos"][r]["after"][:12])
         print(f"  pushed {r}")
-    print(f"Shipped. Cleanup: ms-workspace clean {batch}")
+    print(f"Shipped. Cleanup: ms-workspace clean {batch}. To revert: ms-workspace undo {batch}")
     return 0
 
 
@@ -413,3 +426,64 @@ def cmd_clean(ws: Workspace, args: list[str]) -> int:
     except OSError:
         pass
     return 0
+
+
+# ------------------------------------------------------------------------- undo
+def cmd_undo(ws: Workspace, args: list[str]) -> int:
+    """Revert the last ship of a batch by adding a commit that restores the previous tree (no force-push)."""
+    yes = "--yes" in args
+    names = [a for a in args if a != "--yes"]
+    if not names:
+        die("usage: undo <batch> [--yes]")
+    records = sorted((ws.state_dir / "ship").glob(f"{valid_name('batch', names[0])}-*.json")) if (ws.state_dir / "ship").is_dir() else []
+    if not records:
+        die(f"no ship record for batch '{names[0]}' (nothing was shipped from this workspace)")
+    record = json.loads(records[-1].read_text())
+    batch, failed = record["batch"], False
+    print(f"Undo of the ship of '{batch}' made at {record['ts']}:")
+    for r in reversed(topo(ws, list(record["repos"]))):
+        info, repo_dir = record["repos"][r], ws.root / r
+        base, before, after = info["base"], info["before"], info["after"]
+        if not info["pushed"]:
+            print(f"  {r}: was not pushed, nothing to undo")
+            continue
+        if info["mode"] == "pr":
+            print(f"  {r}: pr mode. The base branch was not touched. Close the pull request and delete the branch:")
+            print(f"      gh pr close --delete-branch {info['branch']}   (run it inside {repo_dir})")
+            continue
+        if not git_ok(repo_dir, "fetch", "origin", base, "--quiet"):
+            eprint(f"  {r}: could not fetch origin/{base}; check the network and try again")
+            failed = True
+            continue
+        current = git_out(repo_dir, "rev-parse", f"origin/{base}")
+        if current == after:
+            tree = git_out(repo_dir, "rev-parse", f"{before}^{{tree}}")
+            print(f"  {r}: {base} is still at {after[:8]}; a new commit will restore the tree of {before[:8]} (history is kept, no force-push)")
+            if not yes:
+                continue
+            made = git(repo_dir, "commit-tree", tree, "-p", current, "-m", f"Revert batch {batch} (restores {before[:8]})")
+            if made.returncode != 0:
+                eprint(f"  {r}: could not create the revert commit: {made.stderr.strip()}")
+                failed = True
+                continue
+            pushed = git(repo_dir, "push", "origin", f"{made.stdout.strip()}:refs/heads/{base}")
+            if pushed.returncode != 0:
+                eprint(f"  {r}: push rejected ({pushed.stderr.strip().splitlines()[-1] if pushed.stderr.strip() else 'unknown'}); nothing changed")
+                failed = True
+                continue
+            ws.log("undo", "ok", r, batch, f"{base}: {after[:8]} -> revert commit {made.stdout.strip()[:8]}")
+            print(f"  {r}: reverted on {base}")
+        elif git_ok(repo_dir, "merge-base", "--is-ancestor", after, current):
+            ahead = git_out(repo_dir, "rev-list", "--count", f"{after}..{current}")
+            print(f"  {r}: others pushed {ahead} commit(s) to {base} after this ship; restoring the old tree would erase their work, so nothing is done automatically.")
+            print("      Revert only this batch's commits, newest first (from a clean checkout of the base branch):")
+            for sha in reversed(git_out(repo_dir, "rev-list", "--first-parent", "--reverse", f"{before}..{after}").split()):
+                merge = len(git_out(repo_dir, "rev-list", "--parents", "-n", "1", sha).split()) > 2
+                print(f"      git revert --no-edit{' -m 1' if merge else ''} {sha}")
+            failed = True
+        else:
+            print(f"  {r}: {base} no longer contains the shipped commits (history was rewritten); handle it by hand.")
+            failed = True
+    if not yes:
+        print("(plan only; pass --yes to push the revert commits)")
+    return 1 if failed else 0

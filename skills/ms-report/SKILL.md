@@ -2,7 +2,7 @@
 name: ms-report
 description: Shows how work and plan usage are going, with current 5h and weekly usage and pace, where tokens went in recent sessions, and what the action log says (slow or flaky tests, cost per batch). Use when the user asks how it is going, whether tokens are being burned, whether there is enough budget to finish something, or what to optimize.
 argument-hint: "[days]"
-allowed-tools: Bash(ms-workspace usage:*) Bash(ms-workspace insights:*) Bash(ms-workspace tokens:*) Bash(ms-workspace memory:*)
+allowed-tools: Bash(ms-workspace usage:*) Bash(ms-workspace insights:*) Bash(ms-workspace tokens:*) Bash(ms-workspace budget:*) Bash(ms-workspace memory:*)
 ---
 
 # ms-report
@@ -16,11 +16,13 @@ A short, decision-oriented report built from three deterministic commands. Do no
    ms-workspace usage
    ms-workspace insights --days $ARGUMENTS
    ms-workspace tokens --days $ARGUMENTS
+   ms-workspace budget
    ```
    If a command says there is no data (no status line snapshot, no workspace, no sessions), say what is missing and how to enable it (`/ms-setup`), then continue with what exists.
 
 2. **Answer in at most 12 lines**, in this order:
    - **Budget**: used and left in the 5h window and the week, time to reset, verdict. If the user mentions a task, check it with `ms-workspace usage --check --need <pct or auto>` and say plainly whether it fits.
+   - **Baseline**: what every session loads before any work (`budget`) and its biggest item, only if it is large.
    - **Burn**: what dominates the token use (batch or repo, tool results, repeated reads) and the one or two hints the audit printed.
    - **Quality**: flaky candidates, slowest runs, conflicts or ship failures, only if non-zero.
    - **Next step**: one concrete action (for example "finish batch X before starting another", "narrow Bash output with rtk", "pause until the window resets at HH:MM").

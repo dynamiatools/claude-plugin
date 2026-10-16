@@ -14,6 +14,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ms-workspace readguard",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -23,6 +33,16 @@
           {
             "type": "command",
             "command": "ms-workspace context",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "compact|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ms-workspace readguard --reset",
             "timeout": 5
           }
         ]
@@ -49,6 +69,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ms-workspace outguard",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   },
   "permissions": {
@@ -68,13 +100,15 @@
       "Bash(ms-workspace test:*)",
       "Bash(ms-workspace integrate:*)",
       "Bash(ms-workspace batch new:*)",
-      "Bash(ms-workspace agent new:*)"
+      "Bash(ms-workspace agent new:*)",
+      "Bash(ms-workspace budget:*)"
     ],
     "ask": [
       "Bash(ms-workspace ship:*)",
       "Bash(ms-workspace clean:*)",
       "Bash(ms-workspace env:*)",
-      "Bash(ms-workspace setup-hooks:*)"
+      "Bash(ms-workspace setup-hooks:*)",
+      "Bash(ms-workspace undo:*)"
     ]
   }
 }

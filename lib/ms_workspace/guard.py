@@ -18,8 +18,8 @@ SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"}
 PUBLISH_GH = {("pr", "create"), ("pr", "merge"), ("pr", "ready"), ("pr", "close"), ("release", "create"),
               ("repo", "create"), ("repo", "delete"), ("workflow", "run")}
-LOOSE = re.compile(r"\bpush\b|\bgh\s+(pr|release|repo|api|workflow)\b|\bms-workspace\s+(ship|clean|env|setup-hooks)\b|\bsend-pack\b")
-MESSAGE = ("Blocked: agents in a batch worktree must not push, open or merge PRs, or run 'ms-workspace ship|clean|env|setup-hooks'. "
+LOOSE = re.compile(r"\bpush\b|\bgh\s+(pr|release|repo|api|workflow)\b|\bms-workspace\s+(ship|clean|env|setup-hooks|undo)\b|\bsend-pack\b")
+MESSAGE = ("Blocked: agents in a batch worktree must not push, open or merge PRs, or run 'ms-workspace ship|clean|undo|env|setup-hooks'. "
            "Commit locally; the human integrates with 'ms-workspace ship'.")
 
 
@@ -100,7 +100,7 @@ def analyze(command: str, depth: int = 0) -> str | None:
                 return "gh api (write)"
         elif prog == "ms-workspace":
             sub = next((a for a in args if not a.startswith("-")), "")
-            if sub in ("ship", "clean", "setup-hooks") or (sub == "env" and "--setup" in args):
+            if sub in ("ship", "clean", "setup-hooks", "undo") or (sub == "env" and "--setup" in args):
                 return f"ms-workspace {sub}"
     return None
 

@@ -9,6 +9,7 @@ temporary directory and a private HOME, so nothing outside it is touched.
 import base64
 import json
 import os
+import re
 import subprocess
 import tempfile
 import textwrap
@@ -1168,12 +1169,12 @@ class TestSetupHooks(Base):
         self.assertOk(self.setup())
         data = self.load()
         cmds = self.commands(data)
-        for c in ("ms-workspace guard", "ms-workspace context", "ms-workspace images capture"):
+        for c in ("ms-workspace guard", "ms-workspace context", "ms-workspace images capture", "ms-workspace readguard", "ms-workspace outguard"):
             self.assertIn(c, cmds)
         self.assertEqual(data["statusLine"]["command"], "ms-statusline")
         self.assertNotIn("Bash(ms-workspace:*)", data["permissions"]["allow"], "the broad rule would auto-approve ship")
         self.assertIn("Bash(ms-workspace status:*)", data["permissions"]["allow"])
-        for risky in ("ship", "clean", "env", "setup-hooks"):
+        for risky in ("ship", "clean", "undo", "env", "setup-hooks"):
             self.assertIn(f"Bash(ms-workspace {risky}:*)", data["permissions"]["ask"])
             self.assertNotIn(f"Bash(ms-workspace {risky}:*)", data["permissions"]["allow"])
         before = self.settings.read_text()
@@ -1297,9 +1298,10 @@ class TestPackaging(unittest.TestCase):
     def test_settings_example_is_valid_and_complete(self):
         data = json.loads((REPO / "settings" / "hooks.example.json").read_text())
         cmds = {h["command"] for groups in data["hooks"].values() for g in groups for h in g["hooks"]}
-        self.assertEqual(cmds, {"ms-workspace guard", "ms-workspace context", "ms-workspace images capture"})
+        self.assertEqual(cmds, {"ms-workspace guard", "ms-workspace context", "ms-workspace images capture", "ms-workspace readguard",
+                                "ms-workspace outguard", "ms-workspace readguard --reset"})
         self.assertNotIn("Bash(ms-workspace:*)", data["permissions"]["allow"])
-        self.assertTrue({"Bash(ms-workspace ship:*)", "Bash(ms-workspace clean:*)"} <= set(data["permissions"]["ask"]))
+        self.assertTrue({"Bash(ms-workspace ship:*)", "Bash(ms-workspace clean:*)", "Bash(ms-workspace undo:*)"} <= set(data["permissions"]["ask"]))
         self.assertEqual(data["statusLine"]["command"], "ms-statusline")
 
     def test_example_workspace_config_parses(self):
@@ -1502,7 +1504,7 @@ class TestGuardHardening(Base):
                     "FOO=1 git push", "sudo git push", "bash -c 'git push origin x'", 'eval "git push"', "git --no-pager push",
                     "echo hi | git push", "ls; git push", "/usr/bin/git push", "git -c user.name=x push", "gh pr merge 3",
                     "gh api repos/o/r/issues -f title=x", "gh api -X POST repos/o/r/issues", "gh release create v1",
-                    "ms-workspace setup-hooks", "ms-workspace env b1 --setup"):
+                    "ms-workspace setup-hooks", "ms-workspace env b1 --setup", "ms-workspace undo b1 --yes"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.guard(cmd, d / "lib").returncode, 2, cmd)
 
@@ -1572,6 +1574,293 @@ class TestRepoHygiene(unittest.TestCase):
         for path in (REPO / "skills").glob("*/SKILL.md"):
             head = path.read_text().split("\n---\n", 1)[0]
             self.assertNotIn("allowed-tools: Bash(ms-workspace:*)", head, f"{path.parent.name} auto-approves every subcommand")
+
+
+# ---------------------------------------------------------------- context budget
+class TestBudget(Base):
+    def setUp(self):
+        super().setUp()
+        self.ch = self.ws.tmp / "claude-home"
+        (self.ch / "skills" / "ms-big").mkdir(parents=True)
+        (self.ch / "skills" / "ms-small").mkdir(parents=True)
+        (self.ch / "agents").mkdir()
+        (self.ch / "CLAUDE.md").write_text("g" * 8000 + "\n@extra.md\n")
+        (self.ch / "extra.md").write_text("e" * 400)
+        (self.ch / "skills" / "ms-big" / "SKILL.md").write_text("---\nname: ms-big\ndescription: " + "word " * 300 + "\n---\nbody that is never listed " * 50)
+        (self.ch / "skills" / "ms-small" / "SKILL.md").write_text("---\nname: ms-small\ndescription: Short one.\ndisable-model-invocation: true\n---\nbody")
+        (self.ch / "agents" / "ms-agent-x.md").write_text("---\nname: ms-agent-x\ndescription: Does a thing.\ntools: Read, Grep\n---\nlong prompt " * 100)
+        self.env = {"CLAUDE_HOME": str(self.ch)}
+
+    def budget(self, *args, cwd=None):
+        r = self.ws.ms("budget", "--json", *args, cwd=cwd or self.ws.root / "lib", env=self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_counts_what_is_loaded_and_ignores_skill_bodies(self):
+        data = self.budget()
+        items = {i["name"]: i["tokens"] for i in data["items"]}
+        self.assertEqual(items["CLAUDE.md (global)"], 2003)            # 8012 characters (8000 plus the import line), divided by 4 and rounded up
+        self.assertEqual(items["@extra.md (imported by CLAUDE.md)"], 100)
+        self.assertGreater(items["skill ms-big"], 300)
+        self.assertLessEqual(items["skill ms-big"], 1536 // 4 + 5, "the listing keeps at most 1536 characters per skill")
+        self.assertLess(items["skill ms-small"], 20, "the body of a skill is not part of the baseline")
+        self.assertLess(items["agent ms-agent-x"], 40, "only an agent's description is listed")
+        self.assertEqual(data["total_tokens"], sum(i["tokens"] for i in data["items"]))
+        self.assertIn("ms-workspace context (SessionStart)", items)
+
+    def test_workspace_claude_md_and_repo_files_are_included_for_the_cwd(self):
+        self.ws.ms("claude-md")
+        (self.ws.root / "lib" / "CLAUDE.md").write_text("r" * 800)
+        names = [i["name"] for i in self.budget()["items"]]
+        self.assertTrue(any(n.startswith("CLAUDE.md (ws)") for n in names), names)
+        self.assertTrue(any(n.startswith("CLAUDE.md (lib)") for n in names), names)
+
+    def test_path_scoped_rules_are_on_demand_only(self):
+        rules = self.ws.root / "lib" / ".claude" / "rules"
+        rules.mkdir(parents=True)
+        (rules / "always.md").write_text("a" * 400)
+        (rules / "scoped.md").write_text("---\npaths:\n  - \"**/*.java\"\n---\n" + "s" * 4000)
+        data = self.budget()
+        self.assertIn("rule always.md", [i["name"] for i in data["items"]])
+        self.assertNotIn("rule scoped.md", [i["name"] for i in data["items"]])
+        self.assertEqual([i["name"] for i in data["on_demand"]], ["rule scoped.md"])
+
+    def test_hints_and_mcp_servers(self):
+        (self.ws.home / ".claude.json").write_text(json.dumps({"mcpServers": {"a": {}, "b": {}, "c": {}}}))
+        data = self.budget()
+        self.assertEqual(data["mcp_servers"], ["a", "b", "c"])
+        text = " ".join(data["hints"])
+        self.assertIn("CLAUDE.md (global) is ~2003 tokens", text)
+        self.assertIn("skill ms-big", text)
+        self.assertIn("3 MCP servers", text)
+
+    def test_text_report_and_top(self):
+        r = self.ws.ms("budget", "--top", "2", cwd=self.ws.root / "lib", env=self.env)
+        self.assertOk(r)
+        self.assertIn("Context budget for", r.stdout)
+        self.assertIn("smaller items", r.stdout)
+        self.assertIn("Total: ~", r.stdout)
+        self.assertIn("Hint:", r.stdout)
+
+    def test_works_outside_a_workspace_and_rejects_bad_options(self):
+        data = self.budget(cwd=self.ws.tmp)
+        self.assertNotIn("ms-workspace context (SessionStart)", [i["name"] for i in data["items"]])
+        self.assertNotEqual(self.ws.ms("budget", "--top", "x", env=self.env).returncode, 0)
+        self.assertNotEqual(self.ws.ms("budget", "--nope", env=self.env).returncode, 0)
+
+    def test_a_file_reachable_twice_is_counted_once(self):
+        """HOME is a parent of the project, so ~/.claude/skills would otherwise be scanned twice."""
+        home_claude = self.ws.home / ".claude"
+        (home_claude / "skills" / "ms-once").mkdir(parents=True)
+        (home_claude / "skills" / "ms-once" / "SKILL.md").write_text("---\nname: ms-once\ndescription: Only once.\n---\n")
+        (home_claude / "agents").mkdir()
+        (home_claude / "agents" / "ms-agent-once.md").write_text("---\nname: ms-agent-once\ndescription: Only once.\n---\n")
+        project = self.ws.home / "proj"
+        project.mkdir()
+        names = [i["name"] for i in json.loads(self.ws.ms("budget", "--json", cwd=project).stdout)["items"]]
+        self.assertEqual(names.count("skill ms-once"), 1)
+        self.assertEqual(names.count("agent ms-agent-once"), 1)
+
+    def test_auto_memory_index_is_counted(self):
+        slug = str(self.ws.root / "lib").replace("/", "-")
+        mem = self.ch / "projects" / slug / "memory"
+        mem.mkdir(parents=True)
+        (mem / "MEMORY.md").write_text("m" * 1200)
+        self.assertEqual({i["name"]: i["tokens"] for i in self.budget()["items"]}["auto-memory index (MEMORY.md)"], 300)
+
+
+# -------------------------------------------------------------- read guard hook
+class TestReadGuard(Base):
+    def setUp(self):
+        super().setUp()
+        self.file = self.ws.tmp / "Big.java"
+        self.file.write_text("x" * 8000)
+
+    def read(self, path=None, session="s1", **extra):
+        payload = {"hook_event_name": "PreToolUse", "session_id": session, "tool_name": "Read",
+                   "tool_input": {"file_path": str(path or self.file), **extra}}
+        return self.ws.ms("readguard", input=json.dumps(payload))
+
+    def hint(self, r):
+        self.assertEqual(r.returncode, 0)
+        return json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if r.stdout.strip() else ""
+
+    def test_second_identical_read_gets_a_hint(self):
+        self.assertEqual(self.hint(self.read()), "")
+        msg = self.hint(self.read())
+        self.assertIn("Big.java was already read 1 time", msg)
+        self.assertIn("2000 tokens", msg)
+        self.assertEqual(json.loads(self.read().stdout)["hookSpecificOutput"]["hookEventName"], "PreToolUse")
+
+    def test_escalates_after_several_repeats(self):
+        for _ in range(3):
+            self.read()
+        self.assertIn("memory note", self.hint(self.read()))
+
+    def test_different_ranges_sessions_and_changes_are_not_repeats(self):
+        self.read(offset=0, limit=50)
+        self.assertEqual(self.hint(self.read(offset=50, limit=50)), "")
+        self.read()
+        self.assertEqual(self.hint(self.read(session="other")), "")
+        self.file.write_text("y" * 9000)   # edited: reading it again is legitimate
+        self.assertEqual(self.hint(self.read()), "")
+
+    def test_small_files_are_not_nagged(self):
+        small = self.ws.tmp / "small.txt"
+        small.write_text("tiny")
+        self.read(small)
+        self.assertEqual(self.hint(self.read(small)), "")
+
+    def test_clear_or_compact_resets_the_memory(self):
+        self.read()
+        reset = {"hook_event_name": "SessionStart", "session_id": "s1", "source": "compact"}
+        self.assertEqual(self.ws.ms("readguard", "--reset", input=json.dumps(reset)).returncode, 0)
+        self.assertEqual(self.hint(self.read()), "", "after a compaction the file is no longer in context")
+        self.read()
+        self.ws.ms("readguard", input=json.dumps(reset))
+        self.assertEqual(self.hint(self.read()), "")
+
+    def test_never_fails_the_session(self):
+        for payload in ("", "garbage", "{}", json.dumps({"tool_input": {"file_path": "/does/not/exist"}, "session_id": "s"}),
+                        json.dumps({"tool_input": {}, "session_id": "s"})):
+            r = self.ws.ms("readguard", input=payload)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, ""), payload)
+
+
+# ------------------------------------------------------------ output guard hook
+class TestOutGuard(Base):
+    def run_hook(self, stdout="", stderr="", tool="Bash", env=None, cwd=None, command="seq 1 5000"):
+        payload = {"hook_event_name": "PostToolUse", "tool_name": tool, "tool_use_id": "tu-1", "cwd": str(cwd or self.ws.tmp),
+                   "tool_input": {"command": command},
+                   "tool_response": {"stdout": stdout, "stderr": stderr, "interrupted": False, "isImage": False}}
+        return self.ws.ms("outguard", input=json.dumps(payload), env=env, cwd=self.ws.tmp)
+
+    def updated(self, r):
+        self.assertEqual(r.returncode, 0)
+        return json.loads(r.stdout)["hookSpecificOutput"]["updatedToolOutput"] if r.stdout.strip() else None
+
+    def test_small_output_is_left_alone(self):
+        self.assertIsNone(self.updated(self.run_hook("\n".join(str(i) for i in range(100)))))
+
+    def test_huge_output_keeps_head_and_tail_and_saves_everything(self):
+        big = "\n".join(f"line {i}" for i in range(1, 8001))
+        out = self.updated(self.run_hook(big))
+        text = out["stdout"]
+        self.assertIn("line 1\n", text)
+        self.assertIn("line 60\n", text)
+        self.assertIn("line 8000", text)
+        self.assertNotIn("line 4000\n", text)
+        self.assertIn("lines omitted", text)
+        self.assertLess(len(text), 6000)
+        self.assertEqual((out["interrupted"], out["isImage"]), (False, False), "the output shape is preserved")
+        saved = Path(re.search(r"Full output: (\S+\.txt)", text).group(1))
+        self.assertIn("line 4000\n", saved.read_text())
+        self.assertIn("$ seq 1 5000", saved.read_text())
+
+    def test_stderr_is_kept_when_stdout_is_large(self):
+        out = self.updated(self.run_hook("\n".join(f"o{i}" for i in range(9000)), stderr="FATAL: the real error\n"))
+        self.assertIn("FATAL: the real error", out["stderr"])
+
+    def test_very_long_single_lines_are_cut_by_characters(self):
+        out = self.updated(self.run_hook("A" * 200000))
+        self.assertLess(len(out["stdout"]), 40000)
+        self.assertIn("characters omitted", out["stdout"])
+
+    def test_threshold_from_env_and_workspace_config(self):
+        mid = "\n".join(f"l{i}" for i in range(3000))   # about 16 000 characters: under the default limit
+        self.assertIsNone(self.updated(self.run_hook(mid)))
+        self.assertIsNotNone(self.updated(self.run_hook(mid, env={"MS_OUTGUARD_MAX_CHARS": "5000"})))
+        self.ws.set_toml(DEFAULT_TOML + "\n[context]\nbash_output_max_chars = 5000\n")
+        self.assertIsNotNone(self.updated(self.run_hook(mid, cwd=self.ws.root / "lib")))
+
+    def test_can_be_turned_off_and_ignores_other_tools(self):
+        big = "z\n" * 40000
+        self.assertIsNone(self.updated(self.run_hook(big, env={"MS_OUTGUARD": "off"})))
+        self.assertIsNone(self.updated(self.run_hook(big, tool="Read")))
+
+    def test_never_fails_the_session(self):
+        for payload in ("", "garbage", "{}", json.dumps({"tool_name": "Bash", "tool_response": "text"}),
+                        json.dumps({"tool_name": "Bash", "tool_response": {"stdout": None}})):
+            r = self.ws.ms("outguard", input=payload)
+            self.assertEqual((r.returncode, r.stdout.strip()), (0, ""), payload)
+
+
+# ------------------------------------------------------------------ undo a ship
+class TestUndo(Base):
+    def setUp(self):
+        super().setUp()
+        self.d = self.ws.batch("b1")
+        self.ws.commit(self.d / "lib", "lib feature", {"feat.txt": "1"})
+        self.ws.commit(self.d / "app", "app feature", {"feat.txt": "2"})
+        self.before = {r: self.ws.git(self.ws.tmp / f"remote-{r}.git", "rev-parse", "next") for r in ("lib", "app")}
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e"))
+
+    def remote_files(self, repo):
+        return self.ws.git(self.ws.tmp / f"remote-{repo}.git", "ls-tree", "-r", "--name-only", "next").splitlines()
+
+    def record(self):
+        files = list((self.ws.root / ".ms-workspace" / "ship").glob("b1-*.json"))
+        self.assertEqual(len(files), 1)
+        return json.loads(files[0].read_text())
+
+    def test_ship_records_before_and_after(self):
+        rec = self.record()
+        for r in ("lib", "app"):
+            info = rec["repos"][r]
+            self.assertEqual(info["before"], self.before[r])
+            self.assertEqual(info["after"], self.ws.git(self.ws.tmp / f"remote-{r}.git", "rev-parse", "next"))
+            self.assertTrue(info["pushed"])
+        self.assertIn("ship", self.ws.log_lines("--action", "ship"))
+
+    def test_plan_only_changes_nothing(self):
+        r = self.ws.ms("undo", "b1")
+        self.assertOk(r)
+        self.assertIn("plan only", r.stdout)
+        self.assertIn("feat.txt", self.remote_files("lib"))
+
+    def test_yes_restores_the_old_tree_with_a_new_commit_and_keeps_history(self):
+        r = self.ws.ms("undo", "b1", "--yes")
+        self.assertOk(r)
+        for repo in ("lib", "app"):
+            self.assertNotIn("feat.txt", self.remote_files(repo))
+            log = self.ws.remote_log(repo)
+            self.assertEqual(log[0], "Revert batch b1 (restores " + self.before[repo][:8] + ")")
+            self.assertIn(f"{repo} feature", log, "the shipped commits stay in the history; nothing is force-pushed")
+        self.assertIn("undo", self.ws.log_lines("--action", "undo"))
+
+    def test_refuses_when_others_pushed_after_the_ship(self):
+        mate = self.ws.tmp / "mate"
+        self.ws.git(self.ws.tmp, "clone", "-q", str(self.ws.tmp / "remote-lib.git"), str(mate))
+        self.ws.git(mate, "checkout", "-q", "next")
+        self.ws.commit(mate, "mate commit", {"mate.txt": "m"})
+        self.ws.git(mate, "push", "-q", "origin", "next")
+        r = self.ws.ms("undo", "b1", "--yes")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("others pushed 1 commit", r.stdout)
+        self.assertIn("git revert --no-edit", r.stdout)
+        self.assertEqual(self.ws.remote_log("lib")[0], "mate commit", "nothing was pushed for lib")
+        self.assertNotIn("feat.txt", self.remote_files("app"), "app, where nobody else pushed, is reverted")
+
+    def test_still_works_after_the_batch_was_cleaned(self):
+        self.assertOk(self.ws.ms("clean", "b1"))
+        self.assertOk(self.ws.ms("undo", "b1", "--yes"))
+        self.assertNotIn("feat.txt", self.remote_files("lib"))
+
+    def test_unknown_batch_and_unpushed_repos(self):
+        self.assertNotEqual(self.ws.ms("undo", "ghost").returncode, 0)
+        path = next((self.ws.root / ".ms-workspace" / "ship").glob("b1-*.json"))
+        rec = json.loads(path.read_text())
+        rec["repos"]["app"]["pushed"] = False
+        rec["repos"]["lib"]["mode"] = "pr"
+        path.write_text(json.dumps(rec))
+        out = self.ws.ms("undo", "b1", "--yes").stdout
+        self.assertIn("app: was not pushed", out)
+        self.assertIn("gh pr close --delete-branch int/b1", out)
+        self.assertIn("feat.txt", self.remote_files("app"))
+        self.assertIn("feat.txt", self.remote_files("lib"))
+
+    def test_needs_a_batch_name(self):
+        self.assertNotEqual(self.ws.ms("undo").returncode, 0)
 
 
 if __name__ == "__main__":

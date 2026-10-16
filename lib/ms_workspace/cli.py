@@ -22,6 +22,7 @@ Usage:
   ms-workspace integrate <batch> [--dry-run] merge agent branches into int/<batch> (conflicts detected first)
   ms-workspace ship <batch> [--yes] [--skip-e2e]   sync with base, test, push (plan only without --yes)
   ms-workspace plan <batch>                  same as `ship` without --yes: shows what would be sent, changes nothing
+  ms-workspace undo <batch> [--yes]          revert the last ship: adds a commit restoring the old tree (never force-pushes)
   ms-workspace clean [<batch>] [--force]     list batches, or remove one that is already merged
   ms-workspace log [-n N] [--day YYYY-MM-DD] [--action A]   show recent actions
   ms-workspace context                       ~15-line briefing (for a SessionStart hook)
@@ -33,6 +34,8 @@ Usage:
   ms-workspace insights [--days N] [--json]  what the log says: slow/flaky tests, time and plan usage per batch
   ms-workspace tokens [--days N] [--json]    token audit of the Claude Code sessions run inside this workspace
   ms-workspace setup-hooks [--dry-run] [--remove] [--project]   merge the ms-* hooks and status line into settings.json
+  ms-workspace budget [--top N] [--json]     what every session loads before you type (CLAUDE.md, skills, agents, memory), in tokens
+  ms-workspace readguard / outguard          token-saving hooks: warn on re-reading an unchanged file; shorten huge Bash output
   ms-workspace doctor                        check tools, versions, resources and workspace.toml
   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 
@@ -75,6 +78,15 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd == "context":
         from .overview import cmd_context
         return cmd_context(Workspace.load(required=False))
+    if cmd == "readguard":
+        from .hooks import cmd_readguard
+        return cmd_readguard(args)
+    if cmd == "outguard":
+        from .hooks import cmd_outguard
+        return cmd_outguard()
+    if cmd == "budget":
+        from .budget import cmd_budget
+        return cmd_budget(Workspace.load(required=False), args)
     if cmd == "setup-hooks":
         from .setup import cmd_setup_hooks
         return cmd_setup_hooks(args)
@@ -86,7 +98,7 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     table = {
         "batch": batches.cmd_batch, "agent": batches.cmd_agent, "affected": batches.cmd_affected,
         "env": batches.cmd_env, "integrate": batches.cmd_integrate, "ship": batches.cmd_ship,
-        "clean": batches.cmd_clean, "plan": lambda ws, a: batches.cmd_ship(ws, a[:1]), "test": runner.cmd_test, "log": overview.cmd_log,
+        "clean": batches.cmd_clean, "undo": batches.cmd_undo, "plan": lambda ws, a: batches.cmd_ship(ws, a[:1]), "test": runner.cmd_test, "log": overview.cmd_log,
         "status": overview.cmd_status, "claude-md": claude_md.cmd_claude_md,
         "memory": memory.cmd_memory, "insights": insights.cmd_insights, "tokens": tokens.cmd_tokens,
     }

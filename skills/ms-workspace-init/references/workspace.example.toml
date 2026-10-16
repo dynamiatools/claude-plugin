@@ -10,6 +10,9 @@ warn_pct = 70                # ask the user to confirm above this % of the 5h/7d
 stop_pct = 90                # stop and confirm above this %
 stale_minutes = 15           # note when the usage snapshot is older than this
 
+[context]                   # token-saving hooks (see README: outguard)
+bash_output_max_chars = 30000   # longer Bash output is cut to its first and last lines; the full text is saved to a file
+
 [tools]                      # rendered into the workspace CLAUDE.md "Tool preference" section
 discovery = ["idea", "codebase-memory", "grep"]   # ordered; "mcp:<server>" adds any MCP server
 shell = "rtk"                # "rtk" adds the rtk note, anything else omits it
