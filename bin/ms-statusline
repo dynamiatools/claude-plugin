@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ms-statusline: Claude Code status line that also records plan usage.
+# Claude Code pipes a JSON document to this script on every update. For Pro/Max
+# plans it contains rate_limits.five_hour / rate_limits.seven_day (percent used
+# and reset time). We print a compact line and save a snapshot that
+# `ms-workspace usage` reads, because there is no CLI to query usage directly.
+#
+# Enable it in settings.json:  "statusLine": { "type": "command", "command": "ms-statusline" }
+# Env: MS_CACHE_DIR (default ~/.cache/ms-workspace)
+set -u
+command -v jq >/dev/null 2>&1 || { echo "ms-statusline: jq missing"; exit 0; }
+input="$(cat)"
+CACHE_DIR="${MS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-workspace}"
+mkdir -p "$CACHE_DIR" 2>/dev/null || true
+
+IFS=$'\t' read -r model ctx p5 r5 p7 r7 < <(jq -r '[
+    (.model.display_name // "?"),
+    (.context_window.used_percentage // "-"),
+    (.rate_limits.five_hour.used_percentage // "-"), (.rate_limits.five_hour.resets_at // "-"),
+    (.rate_limits.seven_day.used_percentage // "-"), (.rate_limits.seven_day.resets_at // "-")
+  ] | map(tostring) | @tsv' <<<"$input" 2>/dev/null) || exit 0
+
+now="$(date +%s)"
+
+if [[ "$p5" != "-" || "$p7" != "-" ]]; then
+  snap="$CACHE_DIR/usage.json"; tmp="$snap.$$"
+  jq -n --argjson now "$now" --arg p5 "$p5" --arg r5 "$r5" --arg p7 "$p7" --arg r7 "$r7" '
+    def num($x): if $x == "-" then null else ($x | tonumber) end;
+    def win($p; $r): if $p == "-" then null else {used_percentage: num($p), resets_at: num($r)} end;
+    {captured_at: $now, five_hour: win($p5; $r5), seven_day: win($p7; $r7)}' > "$tmp" 2>/dev/null \
+    && mv "$tmp" "$snap" || rm -f "$tmp"
+  # History sample at most once a minute, for pace calculations.
+  marker="$CACHE_DIR/.last-sample"
+  if [[ -z "$(find "$marker" -mmin -1 2>/dev/null)" ]]; then
+    : > "$marker"
+    jq -cn --argjson t "$now" --arg p5 "$p5" --arg p7 "$p7" \
+      '{t:$t, u5:($p5|tonumber? // null), u7:($p7|tonumber? // null)}' >> "$CACHE_DIR/usage-history.jsonl" 2>/dev/null
+    [[ "$(wc -l < "$CACHE_DIR/usage-history.jsonl" 2>/dev/null || echo 0)" -gt 4000 ]] \
+      && tail -n 2000 "$CACHE_DIR/usage-history.jsonl" > "$CACHE_DIR/h.$$" && mv "$CACHE_DIR/h.$$" "$CACHE_DIR/usage-history.jsonl"
+  fi
+fi
+
+color() { # pct -> ansi color (green < 70 <= yellow < 90 <= red)
+  local p="${1%%.*}"
+  if   [[ "$p" -ge 90 ]]; then printf '\033[31m'
+  elif [[ "$p" -ge 70 ]]; then printf '\033[33m'
+  else printf '\033[32m'; fi
+}
+reset=$'\033[0m'
+
+out="[$model]"
+[[ "$ctx" != "-" ]] && out+=" ctx ${ctx%%.*}%"
+if [[ "$p5" != "-" ]]; then
+  left=$(( r5 - now )); [[ $left -lt 0 ]] && left=0
+  out+=" | 5h $(color "$p5")${p5%%.*}%${reset} ($((left/3600))h$(( (left%3600)/60 ))m)"
+fi
+[[ "$p7" != "-" ]] && out+=" | 7d $(color "$p7")${p7%%.*}%${reset}"
+printf '%s\n' "$out"

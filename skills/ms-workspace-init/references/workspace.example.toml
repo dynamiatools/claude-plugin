@@ -5,6 +5,11 @@ root = "~/IdeaProjects/example"
 tasks = "local"              # "local" (TASKS.md per batch) or "github" (one issue per batch)
 log_retention_days = 14      # daily action logs older than this are deleted
 
+[usage]                     # plan-usage guard (see `ms-workspace usage`)
+warn_pct = 70                # ask the user to confirm above this % of the 5h/7d window
+stop_pct = 90                # stop and confirm above this %
+stale_minutes = 15           # note when the usage snapshot is older than this
+
 [repos.core-lib]
 url = "git@github.com:org/core-lib.git"
 base = "next"                # branch where changes are integrated

@@ -11,6 +11,7 @@ Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/.batch
 
 ## Steps
 
+0. **Check plan usage first**: `ms-workspace usage --check`. Exit 0 or 3 (no data): continue. Exit 1 or 2: show the printed numbers and use `AskUserQuestion` (continue / do a smaller step / stop) before doing anything else. Never start something that cannot be finished in the remaining window.
 1. **Orient cheaply.** Run `ms-workspace status` and `ms-workspace clean` (lists existing batches). If the user named an existing batch, skip to step 4.
 
 2. **Collect only what is missing** with one `AskUserQuestion` round:

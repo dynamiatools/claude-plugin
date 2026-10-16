@@ -18,6 +18,7 @@
 #   ms-workspace context                       ~15-line briefing (for a SessionStart hook)
 #   ms-workspace status [--fetch]              one line per repo: branch, ahead/behind base, dirty, batches
 #   ms-workspace claude-md [--print]           (re)generate <workspace>/CLAUDE.md; only the managed block is touched
+#   ms-workspace usage [--check] [--need PCT] [--json|--line]   plan usage: 5h session and 7d week, pace, verdict
 #   ms-workspace doctor                        check tools, versions, resources and workspace.toml
 #   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 #
@@ -440,6 +441,7 @@ cmd_context() {
   else
     echo "Active batches: none"
   fi
+  cmd_usage --line 2>/dev/null | sed 's/^/Plan /' || true
   echo "Recent actions:"
   cmd_log -n 5 | sed 's/^/  /'
 }
@@ -470,6 +472,7 @@ EOF
 - Commit locally. Never \`git push\`, open/merge PRs, or run \`ms-workspace ship|clean\`: a hook blocks them and the human integrates.
 - After changes run \`ms-workspace test t0\` (tests only what changed). Fix failures before saying you are done.
 - Do not create branches or worktrees by hand; use \`ms-workspace batch new\` / \`agent new\`.
+- Before starting a task or session run \`ms-workspace usage --check\` (add \`--need <pct>\` with your estimate of the 5h-window share the task needs). Exit 1 or 2: show the numbers and get the user's confirmation first. Exit 3: no data, proceed. Never leave work half done: prefer finishing or cleanly stopping a small step.
 
 ## Batch flow (human-driven)
 \`batch new\` -> \`agent new\` -> \`test t0\` -> \`integrate\` -> \`test t1\` -> \`ship --yes\` -> \`clean\`.
@@ -513,6 +516,89 @@ cmd_claude_md() {
   fi
   cat "$tmp" > "$target"; rm -f "$blockfile" "$tmp"
   log_event claude-md ok "" "" "$target"
+}
+
+# ---------- usage ----------
+# Reads the snapshot written by ms-statusline (Claude Code only exposes plan usage to the status line).
+USAGE_JQ='
+def dur($s): ($s|floor) as $s | if $s<=0 then "0m" elif $s<3600 then "\($s/60|floor)m"
+  elif $s<86400 then "\($s/3600|floor)h\(($s%3600)/60|floor)m" else "\($s/86400|floor)d\(($s%86400)/3600|floor)h" end;
+def analyze($w; $len):
+  if $w == null or $w.used_percentage == null then {state:"nodata"}
+  else ($w.resets_at - $now) as $left
+  | if $left <= 0 then {state:"reset"}
+    else ($len - $left) as $el | ($el/$len) as $ef | $w.used_percentage as $u
+    | {state:"active", used:$u, left:(100-$u), resets_in:$left,
+       pace: (if $ef >= 0.05 then ($u/($ef*100)) else null end),
+       projected: (if $ef >= 0.05 then ($u/$ef) else null end),
+       eta100: (if $ef >= 0.05 and $u > 0 then ((100-$u)/($u/$el)) else null end)}
+    end end;
+def level($a; $session):
+  if $a.state != "active" then 0
+  else (($a.used >= $stop)
+        or ($session and $need > 0 and ($a.used + $need) > 100)
+        or ($a.used >= 70 and $a.eta100 != null and $a.eta100 < 1800 and $a.eta100 < $a.resets_in)) as $crit
+     | (($a.used >= $warn)
+        or ($a.used >= 50 and $a.projected != null and $a.projected > 100)
+        or ($session and $need > 0 and ($a.used + $need) > $stop)) as $warnb
+     | if $crit then 2 elif $warnb then 1 else 0 end
+  end;
+def line($name; $a):
+  if $a.state == "nodata" then "\($name): no data"
+  elif $a.state == "reset" then "\($name): window reset since the last data (usage unknown, probably low)"
+  else "\($name): \($a.used|round)% used, \($a.left|round)% left | resets in \(dur($a.resets_in))"
+    + (if $a.pace != null then " | pace x\(($a.pace*10|round)/10) | ~\($a.projected|round)% at reset" else " | too early to project" end)
+    + (if ($a.eta100 != null and $a.eta100 < $a.resets_in) then " | hits 100% in ~\(dur($a.eta100))" else "" end)
+  end;
+analyze(.five_hour; 18000) as $s | analyze(.seven_day; 604800) as $w
+| ([level($s; true), level($w; false)] | max) as $lv
+| {age_s: ($now - .captured_at), session: $s, week: $w, level: $lv, verdict: (["ok","warn","critical"][$lv]),
+   nodata: ($s.state == "nodata" and $w.state == "nodata"),
+   text: ([line("5h session"; $s), line("7d week   "; $w)] | join("\n")),
+   short: ("usage 5h " + (if $s.state=="active" then "\($s.used|round)% (resets in \(dur($s.resets_in)))" else "n/a" end)
+           + ", 7d " + (if $w.state=="active" then "\($w.used|round)%" else "n/a" end)
+           + " - " + (["ok","WARN","CRITICAL"][$lv]))}'
+
+cmd_usage() {
+  load_ws 2>/dev/null || true
+  local check=0 need=0 mode=text arg warn=70 stop=90 stale=15
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check) check=1; shift ;;
+      --need)  need="${2:?--need needs a percentage}"; shift 2 ;;
+      --json)  mode=json; shift ;;
+      --line)  mode=line; shift ;;
+      *) die "usage: unknown option $1" ;;
+    esac
+  done
+  [[ -n "${CFG_JSON:-}" ]] && {
+    warn="$(cfg '.usage.warn_pct // 70')"; stop="$(cfg '.usage.stop_pct // 90')"; stale="$(cfg '.usage.stale_minutes // 15')"; }
+  local snap="${MS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-workspace}/usage.json" res
+  if [[ ! -f "$snap" ]]; then
+    [[ $mode == line ]] || echo "No usage data yet. Enable ms-statusline (see README) on a Pro/Max plan; data appears after the first reply of a session." >&2
+    [[ $check -eq 1 ]] && return 3 || return 0
+  fi
+  res="$(jq --argjson now "$(date +%s)" --argjson warn "$warn" --argjson stop "$stop" --argjson need "$need" "$USAGE_JQ" "$snap")" \
+    || die "could not read $snap"
+  if [[ "$(jq -r .nodata <<<"$res")" == "true" ]]; then
+    [[ $mode == line ]] || echo "Usage snapshot has no rate-limit data (API-key plans do not report it)." >&2
+    [[ $check -eq 1 ]] && return 3 || return 0
+  fi
+  case "$mode" in
+    json) echo "$res" ;;
+    line) jq -r .short <<<"$res" ;;
+    *)
+      jq -r --argjson need "$need" --argjson stale "$stale" '
+        .text
+        + (if $need > 0 then "\nplanned task: ~\($need)% of the 5h window" else "" end)
+        + "\nverdict: \(.verdict | ascii_upcase) - "
+        + (if .level == 2 then "stop and confirm with the user before starting; do not leave work half done"
+           elif .level == 1 then "confirm with the user; prefer small steps that can be finished"
+           else "proceed" end)
+        + (if .age_s > ($stale * 60) then "\n(data is \(.age_s/60|floor) min old; it refreshes while a Claude session is running)" else "" end)' <<<"$res" ;;
+  esac
+  if [[ $check -eq 1 ]]; then return "$(jq -r .level <<<"$res")"; fi
+  return 0
 }
 
 # ---------- doctor ----------
@@ -559,6 +645,15 @@ cmd_doctor() {
     [[ $bad -eq 0 ]] && ok "all repos present, bases and deps valid"
   fi
 
+  echo "Plan usage:"
+  local snap="${MS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-workspace}/usage.json" age
+  if [[ -f "$snap" ]]; then
+    age=$(( ( $(date +%s) - $(jq -r .captured_at "$snap") ) / 60 ))
+    ok "usage snapshot ${age} min old (ms-statusline is working)"
+  else
+    warn "no usage snapshot: add ms-statusline as statusLine in settings.json (Pro/Max plans only)"
+  fi
+
   echo "Resources:"
   local ram disk
   ram="$(free -g 2>/dev/null | awk '/^Mem:/{print $7}')"; disk="$(df -BG --output=avail "${WS_ROOT:-$HOME}" 2>/dev/null | tail -1 | tr -d ' G')"
@@ -573,6 +668,7 @@ case "${1:-}" in
   status)    shift; cmd_status "$@" ;;
   context)   shift; cmd_context ;;
   claude-md) shift; cmd_claude_md "$@" ;;
+  usage)     shift; cmd_usage "$@" ;;
   doctor)    shift; cmd_doctor ;;
   batch)     shift; cmd_batch "$@" ;;
   affected)  shift; cmd_affected "$@" ;;

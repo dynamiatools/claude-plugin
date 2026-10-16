@@ -45,6 +45,7 @@ Read-only helpers. Three cheap ones run on Haiku so the main model does not spen
 
 | Tool | What it does |
 |---|---|
+| `ms-statusline` | Claude Code status line (`[model] ctx | 5h % | 7d %`) that also saves the plan-usage snapshot read by `ms-workspace usage`. Needs a Pro/Max plan |
 | `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. See the flow below |
 
 **Batch flow** (all local until `ship`):
@@ -57,7 +58,9 @@ Read-only helpers. Three cheap ones run on Haiku so the main model does not spen
 6. `ms-workspace ship <batch>`: prints the plan. With `--yes` it merges the moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`). It refuses release branches and never force-pushes.
 7. `ms-workspace clean [<batch>]`: lists batches, or removes a merged one (worktrees and local branches).
 
-Also: `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guard` (see Hooks) and `claude-md`.
+**Plan usage.** Claude Code only exposes session (5h) and weekly (7d) usage to the status line, so `ms-statusline` stores a snapshot and `ms-workspace usage` reads it: percent used and left, time to reset, pace, projection and a verdict (`ok`/`warn`/`critical`, thresholds `[usage]` in `workspace.toml`, default 70/90). `usage --check` exits 0/1/2 (3 = no data) so skills and agents can ask for confirmation before starting; `--need <pct>` checks that a planned task fits. Pace and projections are linear and only influence the verdict above 50 % used. Data refreshes while a session is running, and is empty until the first reply of a session.
+
+Also: `usage`, `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guard` (see Hooks) and `claude-md`.
 
 **Workspace CLAUDE.md.** `ms-workspace claude-md` (run by `/ms-workspace-init`) generates `<workspace>/CLAUDE.md`: repos in dependency order, agent rules, the batch flow, token and tool guidance. Only the block between the `ms-workspace:begin/end` markers is managed, so your own notes around it survive every regeneration.
 
@@ -68,7 +71,8 @@ Also: `log`, `affected`, `context`, `status [--fetch]`, `doctor`, `guard` (see H
 `install.sh` never edits your `settings.json`. To enable the hooks, merge `settings/hooks.example.json` into `~/.claude/settings.json` (or a project's `.claude/settings.json`):
 
 - `ms-workspace guard` (PreToolUse on Bash) blocks `git push`, `gh pr create|merge` and `ms-workspace ship|clean` **only inside batch worktrees**, so agents commit locally and a human integrates. Blocked attempts are logged.
-- `ms-workspace context` (SessionStart) injects a ~15-line briefing (active batches, open tasks, last actions) so the agent does not have to explore. It prints nothing outside a workspace.
+- `ms-statusline` (as `statusLine`) shows usage in the footer and feeds `ms-workspace usage`.
+- `ms-workspace context` (SessionStart) injects a ~15-line briefing (active batches, open tasks, plan usage, last actions) so the agent does not have to explore. It prints nothing outside a workspace.
 - The `permissions.allow` entry avoids a prompt on every `ms-workspace` call.
 
 ## Quick start (new machine)
