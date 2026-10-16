@@ -11,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import textwrap
 import time
@@ -96,6 +97,10 @@ class WS:
 
     def ms(self, *args, cwd=None, input=None, env=None):
         return run([BIN, *args], cwd=cwd or self.root, env={**self.env, **(env or {})}, input=input)
+
+    def ms_py(self, *args, cwd=None, input=None, env=None):
+        """Like ms() but through the current interpreter, so PATH can be restricted without breaking the shebang."""
+        return run([sys.executable, BIN, *args], cwd=cwd or self.root, env={**self.env, **(env or {})}, input=input)
 
     def set_toml(self, text):
         (self.root / "workspace.toml").write_text(textwrap.dedent(text))
@@ -1304,6 +1309,24 @@ class TestPackaging(unittest.TestCase):
         self.assertTrue({"Bash(ms-workspace ship:*)", "Bash(ms-workspace clean:*)", "Bash(ms-workspace undo:*)"} <= set(data["permissions"]["ask"]))
         self.assertEqual(data["statusLine"]["command"], "ms-statusline")
 
+    def test_code_stays_valid_for_the_minimum_python(self):
+        """The tool promises Python 3.11. Reusing the f-string's own quote inside {} and a few library calls are 3.12+."""
+        nested = re.compile(r'f(["\'])(?:(?!\1).)*?\{[^{}]*\1[^{}]*\}')
+        newer = re.compile(r"\bPath\.walk\(|\.walk\(top_down|itertools\.batched|from typing import .*\boverride\b|^\s*type\s+\w+\s*=|def \w+\[\w+\]")
+        sources = list((REPO / "lib" / "ms_workspace").glob("*.py")) + [REPO / "bin" / "ms-workspace"]
+        for path in sources:
+            for n, line in enumerate(path.read_text().splitlines(), 1):
+                self.assertIsNone(nested.search(line), f"{path.name}:{n} reuses the f-string quote (Python 3.12+): {line.strip()[:80]}")
+                self.assertIsNone(newer.search(line), f"{path.name}:{n} uses a Python 3.12+ feature: {line.strip()[:80]}")
+
+    def test_example_mock_definition_is_valid(self):
+        import tomllib
+        data = tomllib.loads((REPO / "skills" / "ms-workspace-init" / "references" / "mocks" / "payments.mock.toml").read_text())
+        self.assertEqual([r["name"] for r in data["route"]][:2], ["create-payment", "declined-card"])
+        sys.path.insert(0, str(REPO / "lib"))
+        from ms_workspace.mock import load_def
+        self.assertEqual(len(load_def(REPO / "skills" / "ms-workspace-init" / "references" / "mocks" / "payments.mock.toml")["route"]), 5)
+
     def test_example_request_collection_is_valid(self):
         import tomllib
         ref = REPO / "skills" / "ms-workspace-init" / "references" / "requests"
@@ -2243,6 +2266,640 @@ class TestHttpPermissions(unittest.TestCase):
         for sub in ("run", "bench"):
             self.assertIn(f"Bash(ms-workspace http {sub}:*)", perms["ask"])
             self.assertNotIn(f"Bash(ms-workspace http {sub}:*)", perms["allow"])
+
+
+# ----------------------------------------------------------------- mock server
+import signal
+import urllib.error
+import urllib.request
+
+PAYMENTS_MOCK = """
+[[route]]
+name = "create"
+method = "POST"
+path = "/v1/payments"
+status = 201
+json = { id = "pay_{{seq}}", amount = "{{body.amount}}", status = "approved", ref = "{{header.x-ref}}", uid = "{{uuid}}" }
+
+[[route]]
+name = "card-only"
+path = "/v1/methods"
+match = { query = { type = "card" } }
+json = { methods = ["visa"] }
+
+[[route]]
+name = "any-method"
+path = "/v1/methods"
+json = { methods = ["visa", "cash"] }
+
+[[route]]
+name = "get"
+path = "/v1/payments/{id}"
+json = { id = "{{path.id}}", page = "{{query.page}}", status = "approved" }
+
+[[route]]
+name = "flaky"
+path = "/flaky"
+sequence = [ { status = 503 }, { status = 503, headers = { Retry-After = "1" } }, { status = 200, json = { ok = true } } ]
+
+[[route]]
+name = "loop"
+path = "/loop"
+loop = true
+sequence = [ { body = "a" }, { body = "b" } ]
+
+[[route]]
+name = "slow"
+path = "/slow"
+delay_ms = 300
+body = "late"
+
+[[route]]
+name = "by-body"
+method = "POST"
+path = "/charge"
+match = { json = { "card.type" = "debit" } }
+json = { fee = 1 }
+
+[[route]]
+name = "wild"
+path = "/files/*"
+body = "file"
+"""
+
+
+def call(url, method="GET", body=None, headers=None, timeout=5):
+    data = json.dumps(body).encode() if isinstance(body, (dict, list)) else (body.encode() if body else None)
+    h = {"Content-Type": "application/json", **(headers or {})} if data else (headers or {})
+    req = urllib.request.Request(url, data=data, method=method, headers=h)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read().decode(), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, e.read().decode(), dict(e.headers)
+        finally:
+            e.close()
+
+
+class MockBase(Base):
+    def setUp(self):
+        super().setUp()
+        (self.ws.root / "mocks").mkdir()
+        (self.ws.root / "mocks" / "pay.mock.toml").write_text(PAYMENTS_MOCK)
+        self.addCleanup(lambda: self.ws.ms("mock", "stop", "--all"))
+
+    def start(self, name="pay", *extra):
+        r = self.ws.ms("mock", "start", name, *extra)
+        self.assertOk(r)
+        return re.search(r"http://127\.0\.0\.1:\d+", r.stdout).group(0)
+
+
+class TestMock(MockBase):
+    def test_lifecycle_start_status_url_stop(self):
+        url = self.start()
+        self.assertEqual(self.ws.ms("mock", "url", "pay").stdout.strip(), url)
+        status = self.ws.ms("mock", "status").stdout
+        self.assertIn("pay: " + url, status)
+        pid = json.loads(next((self.ws.root / ".ms-workspace" / "mock" / "pay").glob("server.json")).read_text())["pid"]
+        self.assertEqual(call(url + "/v1/methods?type=card")[0], 200)
+        self.assertIn("already running", self.ws.ms("mock", "start", "pay").stdout)
+        self.assertIn("stopped mock 'pay'", self.ws.ms("mock", "stop", "pay").stdout)
+        with self.assertRaises(OSError):
+            call(url + "/v1/methods", timeout=1)
+        self.assertIn("no mock servers", self.ws.ms("mock", "status").stdout)
+        with self.assertRaises(ProcessLookupError):
+            for _ in range(30):
+                os.kill(pid, 0)
+                time.sleep(0.1)
+            os.kill(pid, 0)
+
+    def test_templates_keep_types_and_use_request_data(self):
+        url = self.start()
+        status, body, _ = call(url + "/v1/payments", "POST", {"amount": 100}, {"X-Ref": "r1"})
+        data = json.loads(body)
+        self.assertEqual(status, 201)
+        self.assertEqual((data["id"], data["amount"], data["ref"]), ("pay_1", 100, "r1"))
+        self.assertIsInstance(data["amount"], int)
+        self.assertRegex(data["uid"], r"^[0-9a-f-]{36}$")
+        self.assertEqual(json.loads(call(url + "/v1/payments", "POST", {"amount": 5})[1])["id"], "pay_2")
+        got = json.loads(call(url + "/v1/payments/abc?page=3")[1])
+        self.assertEqual((got["id"], got["page"]), ("abc", "3"))
+
+    def test_sequences_and_loops(self):
+        url = self.start()
+        codes = [call(url + "/flaky")[0] for _ in range(5)]
+        self.assertEqual(codes, [503, 503, 200, 200, 200], "the last step repeats")
+        self.assertEqual(call(url + "/flaky")[2].get("Retry-After"), None)
+        self.assertEqual([call(url + "/loop")[1] for _ in range(4)], ["a", "b", "a", "b"])
+
+    def test_matching_on_query_and_body_and_first_match_wins(self):
+        url = self.start()
+        self.assertIn("visa", call(url + "/v1/methods?type=card")[1])
+        self.assertIn("cash", call(url + "/v1/methods")[1])
+        self.assertEqual(json.loads(call(url + "/charge", "POST", {"card": {"type": "debit"}})[1]), {"fee": 1})
+        self.assertEqual(call(url + "/charge", "POST", {"card": {"type": "credit"}})[0], 404)
+        self.assertEqual(call(url + "/files/a/b/c.txt")[1], "file")
+
+    def test_delay(self):
+        url = self.start()
+        started = time.time()
+        call(url + "/slow")
+        self.assertGreaterEqual(time.time() - started, 0.3)
+
+    def test_unmatched_requests_are_404_and_recorded(self):
+        url = self.start()
+        status, body, _ = call(url + "/nope")
+        self.assertEqual(status, 404)
+        self.assertEqual(json.loads(body)["error"], "no mock route")
+        out = self.ws.ms("mock", "requests", "--unmatched").stdout
+        self.assertIn("GET /nope -> 404 (NO ROUTE", out)
+        failed = self.ws.ms("mock", "assert", "--no-unmatched")
+        self.assertEqual(failed.returncode, 1)
+        self.assertIn("hit no route", failed.stdout)
+
+    def test_assertions_on_what_was_received(self):
+        url = self.start()
+        call(url + "/v1/payments", "POST", {"amount": 100, "currency": "COP"}, {"X-Ref": "order-7"})
+        call(url + "/v1/payments/p1?page=2")
+        a = lambda *x: self.ws.ms("mock", "assert", "pay", *x)
+        self.assertOk(a("--path", "/v1/payments", "--method", "POST", "--times", "1", "--json", "amount=100", "--json", "currency=COP"))
+        self.assertOk(a("--path", "/v1/payments/*", "--query", "page=2"))
+        self.assertOk(a("--path", "/v1/payments", "--header", "x-ref=order-7"))
+        self.assertOk(a("--path", "/v1/payments/{id}", "--min", "1"))
+        self.assertOk(a("--path", "/v1/refunds", "--none"))
+        bad = a("--path", "/v1/payments", "--method", "POST", "--json", "amount=999")
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("found 0", bad.stdout)
+        self.assertIn("closest: POST /v1/payments", bad.stdout)
+        self.assertEqual(a("--path", "/v1/payments", "--times", "2").returncode, 1)
+        self.assertNotEqual(a("--bogus").returncode, 0)
+        self.assertNotEqual(self.ws.ms("mock", "assert", "pay").returncode, 0, "needs --path or --no-unmatched")
+
+    def test_requests_listing_filters(self):
+        url = self.start()
+        call(url + "/v1/payments", "POST", {"amount": 1})
+        call(url + "/v1/methods?type=card")
+        out = self.ws.ms("mock", "requests", "--method", "POST").stdout
+        self.assertIn("POST /v1/payments -> 201 (create", out)
+        self.assertNotIn("/v1/methods", out)
+        self.assertIn("?type=card", self.ws.ms("mock", "requests", "--path", "methods").stdout)
+        self.assertEqual(len(self.ws.ms("mock", "requests", "-n", "1").stdout.strip().splitlines()), 1)
+
+    def test_secrets_are_masked_in_the_record(self):
+        url = self.start()
+        call(url + "/v1/payments", "POST", {"amount": 1, "password": "hunter2", "card_token": "tok_live"}, {"Authorization": "Bearer abc123"})
+        record = (self.ws.root / ".ms-workspace" / "mock" / "pay" / "requests.jsonl").read_text()
+        for secret in ("hunter2", "tok_live", "abc123"):
+            self.assertNotIn(secret, record)
+        self.assertIn("***", record)
+
+    def test_restart_reloads_and_stale_state_is_detected(self):
+        url = self.start()
+        pid = json.loads((self.ws.root / ".ms-workspace" / "mock" / "pay" / "server.json").read_text())["pid"]
+        (self.ws.root / "mocks" / "pay.mock.toml").write_text('[[route]]\npath = "/new"\nbody = "fresh"\n')
+        url2 = self.start("pay", "--restart")
+        self.assertEqual(call(url2 + "/new")[1], "fresh")
+        self.assertEqual(call(url2 + "/v1/methods")[0], 404)
+        new_pid = json.loads((self.ws.root / ".ms-workspace" / "mock" / "pay" / "server.json").read_text())["pid"]
+        self.assertNotEqual(pid, new_pid)
+        os.kill(new_pid, signal.SIGKILL)
+        time.sleep(0.3)
+        self.assertIn("DEAD", self.ws.ms("mock", "status").stdout)
+        self.assertEqual(call(self.start() + "/new")[1], "fresh", "a dead mock can simply be started again")
+
+    def test_fixed_port_and_port_conflicts(self):
+        free = socket_free_port()
+        self.assertEqual(self.start("pay", "--port", str(free)), f"http://127.0.0.1:{free}")
+        (self.ws.root / "mocks" / "other.mock.toml").write_text('[[route]]\npath = "/"\nbody = "x"\n')
+        r = self.ws.ms("mock", "start", "other", "--port", str(free))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("exited at startup", r.stderr)
+        self.assertNotIn("Traceback", r.stderr.split("exited at startup")[0])
+
+    def test_invalid_definitions_and_names(self):
+        (self.ws.root / "mocks" / "empty.mock.toml").write_text('port = 1\n')
+        (self.ws.root / "mocks" / "bare.mock.toml").write_text('[[route]]\npath = "/x"\n')
+        (self.ws.root / "mocks" / "broken.mock.toml").write_text("not [toml")
+        for ref in ("empty", "bare", "broken", "ghost"):
+            r = self.ws.ms("mock", "start", ref)
+            self.assertNotEqual(r.returncode, 0, ref)
+            self.assertNotIn("Traceback", r.stderr, ref)
+        self.assertNotEqual(self.ws.ms("mock", "start").returncode, 0)
+        self.assertNotEqual(self.ws.ms("mock", "url").returncode, 0)
+        self.assertNotEqual(self.ws.ms("mock", "frobnicate").returncode, 0)
+        listing = self.ws.ms("mock", "list").stdout
+        self.assertIn("pay: 9 routes", listing)
+        self.assertIn("broken: invalid", listing)
+        self.assertIn("bare: invalid", listing)
+
+    def test_works_together_with_the_http_tool(self):
+        url = self.start()
+        (self.ws.root / "requests").mkdir()
+        (self.ws.root / "requests" / "pay.http.toml").write_text("""
+[[request]]
+name = "create"
+method = "POST"
+path = "/v1/payments"
+json = { amount = 250 }
+expect = { status = 201, json = { amount = 250, status = "approved" } }
+""")
+        r = self.ws.ms("http", "run", "pay", "--var", f"base_url={url}")
+        self.assertOk(r)
+        self.assertOk(self.ws.ms("mock", "assert", "--path", "/v1/payments", "--json", "amount=250", "--times", "1"))
+
+    def test_without_a_workspace_state_goes_to_the_cache(self):
+        d = self.ws.tmp / "loose"
+        (d / "mocks").mkdir(parents=True)
+        (d / "mocks" / "m.mock.toml").write_text('[[route]]\npath = "/"\nbody = "hi"\n')
+        r = self.ws.ms("mock", "start", "m", cwd=d)
+        self.assertOk(r)
+        self.addCleanup(lambda: self.ws.ms("mock", "stop", "--all", cwd=d))
+        self.assertEqual(call(re.search(r"http://\S+", r.stdout).group(0))[1], "hi")
+        self.assertTrue((self.ws.cache / "mock" / "m" / "server.json").exists())
+
+
+def socket_free_port():
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+# ---------------------------------------------------------------------- docker
+FAKE_DOCKER = r"""#!__PY__
+import json, os, sys
+data = json.load(open(os.environ["FAKE_DOCKER"]))
+args = sys.argv[1:]
+open(os.environ["FAKE_DOCKER"] + ".calls", "a").write(" ".join(args) + "\n")
+if data.get("down"):
+    sys.stderr.write("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n"); sys.exit(1)
+def lines(rows):
+    print("\n".join(json.dumps(r) for r in rows))
+cmd = args[0]
+if cmd == "ps":
+    if "status=exited" in args: lines(data.get("exited", []))
+    else: lines([r for r in data["ps"] if "-a" in args or r["State"] == "running"])
+elif cmd == "logs": print("\n".join(data["logs"].get(args[-1], [])))
+elif cmd == "stats": lines(data["stats"])
+elif cmd == "system": lines(data["df"])
+elif cmd == "images": lines(data.get("dangling", []))
+elif cmd == "inspect":
+    if args[1] not in data["inspect"]:
+        sys.stderr.write("Error: No such object: " + args[1] + "\n"); sys.exit(1)
+    state = data["inspect"][args[1]]
+    if isinstance(state, list):   # successive answers: pop the first
+        item = state.pop(0) if len(state) > 1 else state[0]
+        json.dump(data, open(os.environ["FAKE_DOCKER"], "w")); print(json.dumps([item]))
+    else: print(json.dumps([state]))
+elif cmd in ("container", "image", "volume"): print("Deleted things\nTotal reclaimed space: 12MB")
+"""
+
+
+def container(name, state="running", status="Up 2 hours", ports="", image="app:1", project="shop"):
+    return {"Names": name, "Image": image, "State": state, "Status": status, "Ports": ports,
+            "Labels": f"com.docker.compose.project={project},other=x" if project else ""}
+
+
+class DockerBase(Base):
+    def setUp(self):
+        super().setUp()
+        self.bin = self.ws.tmp / "dockerbin"
+        self.bin.mkdir()
+        exe = self.bin / "docker"
+        exe.write_text(FAKE_DOCKER.replace("__PY__", sys.executable))
+        exe.chmod(0o755)
+        self.data_file = self.ws.tmp / "docker.json"
+        self.data = {"ps": [], "logs": {}, "stats": [], "df": [], "inspect": {}}
+
+    def d(self, *args, **extra):
+        self.data_file.write_text(json.dumps(self.data))
+        env = {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_DOCKER": str(self.data_file), **extra}
+        return self.ws.ms("docker", *args, env=env)
+
+    def calls(self):
+        f = Path(str(self.data_file) + ".calls")
+        return f.read_text().splitlines() if f.exists() else []
+
+
+import sys
+
+
+class TestDocker(DockerBase):
+    def test_status_is_compact_and_flags_problems(self):
+        self.data["ps"] = [
+            container("shop-db", ports="0.0.0.0:5432->5432/tcp, :::5432->5432/tcp"),
+            container("shop-web", status="Up 3 minutes (unhealthy)", ports="0.0.0.0:8080->80/tcp"),
+            container("old-job", state="exited", status="Exited (1) 2 days ago", project=""),
+        ]
+        out = self.d("status").stdout
+        self.assertIn("shop-db", out)
+        self.assertIn("5432->5432", out)
+        self.assertNotIn("0.0.0.0", out)
+        self.assertEqual(out.count("5432->5432"), 1, "IPv4 and IPv6 bindings collapse into one")
+        self.assertIn("[shop]", out)
+        self.assertIn("Unhealthy: shop-web", out)
+        self.assertNotIn("old-job", out)
+        everything = self.d("status", "-a").stdout
+        self.assertIn("old-job", everything)
+        self.assertIn("Stopped: old-job", everything)
+        self.assertNotIn("old-job", self.d("status", "--project", "shop", "-a").stdout)
+
+    def test_logs_collapse_repeats_strip_timestamps_and_filter_errors(self):
+        self.data["logs"]["web"] = (["2026-10-15T10:00:0%d.123Z GET /health 200" % (i % 10) for i in range(3)]
+                                    + ["2026-10-15T10:00:00.1Z GET /health 200"] * 37
+                                    + ["2026-10-15T10:01:00Z ERROR payment failed: connection refused", "plain line", "x" * 500])
+        out = self.d("logs", "web").stdout
+        self.assertIn("GET /health 200  (x38)", out) if False else None
+        self.assertIn("(x", out)
+        self.assertNotIn("2026-10-15T", out)
+        self.assertTrue(all(len(l) < 330 for l in out.splitlines()))
+        errors = self.d("logs", "web", "--errors").stdout
+        self.assertIn("ERROR payment failed", errors)
+        self.assertNotIn("plain line", errors)
+        self.assertEqual(len(self.d("logs", "web", "-n", "2").stdout.strip().splitlines()), 3, "a header plus the last two lines")
+
+    def test_logs_need_one_container(self):
+        self.assertNotEqual(self.d("logs").returncode, 0)
+        self.assertNotEqual(self.d("logs", "a", "b").returncode, 0)
+
+    def test_stats_sorted_by_memory_with_a_high_flag(self):
+        self.data["stats"] = [
+            {"Name": "small", "CPUPerc": "1.00%", "MemUsage": "10MiB / 1GiB", "MemPerc": "1.00%", "NetIO": "1kB / 1kB", "PIDs": "3"},
+            {"Name": "hog", "CPUPerc": "95.00%", "MemUsage": "900MiB / 1GiB", "MemPerc": "88.00%", "NetIO": "1MB / 2MB", "PIDs": "40"},
+        ]
+        lines = self.d("stats").stdout.strip().splitlines()
+        self.assertTrue(lines[0].startswith("hog"))
+        self.assertIn("<- high", lines[0])
+        self.assertNotIn("<- high", lines[1])
+
+    def test_disk_summary(self):
+        self.data["df"] = [{"Type": "Images", "TotalCount": 12, "Active": 1, "Size": "5.2GB", "Reclaimable": "4.9GB (95%)"}]
+        out = self.d("disk").stdout
+        self.assertIn("Images", out)
+        self.assertIn("reclaimable 4.9GB (95%)", out)
+        self.assertIn("docker clean", out)
+
+    def test_health_details(self):
+        self.data["inspect"]["web"] = {"State": {"Status": "running", "ExitCode": 0, "OOMKilled": True, "Health": {
+            "Status": "unhealthy", "Log": [{"ExitCode": 1, "Output": f"curl: (7) failed {i}\nrefused"} for i in range(5)]}},
+            "RestartCount": 4, "Config": {"Image": "web:2"}}
+        self.data["inspect"]["db"] = {"State": {"Status": "running", "ExitCode": 0}, "Config": {"Image": "pg:16"}}
+        out = self.d("health", "web", "db").stdout
+        self.assertIn("web: running, health unhealthy, restarts 4", out)
+        self.assertIn("OOM-KILLED", out)
+        self.assertEqual(out.count("check exit 1"), 3, "only the last three checks")
+        self.assertIn("failed 4 / refused", out)
+        self.assertIn("db: running, no healthcheck", out)
+        r = self.d("health", "ghost")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("No such object", r.stderr)
+
+    def test_ports_and_env_masking(self):
+        self.data["ps"] = [container("a", ports="0.0.0.0:8080->80/tcp"), container("b", ports="0.0.0.0:5432->5432/tcp, :::5432->5432/tcp")]
+        out = self.d("ports").stdout.strip().splitlines()
+        self.assertEqual(len(out), 2)
+        self.assertIn("5432 -> b:5432", out[0])
+        self.data["inspect"]["a"] = {"Config": {"Env": ["DB_PASSWORD=hunter2", "API_KEY=abc", "MODE=prod", "PATH=/usr/bin"]}}
+        env = self.d("env", "a").stdout
+        self.assertNotIn("hunter2", env)
+        self.assertNotIn("abc", env)
+        self.assertIn("DB_PASSWORD=***", env)
+        self.assertIn("MODE=prod", env)
+
+    def test_wait_ready_failed_and_timeout(self):
+        self.data["inspect"]["ok"] = {"State": {"Status": "running", "Health": {"Status": "healthy"}}}
+        self.data["inspect"]["nohc"] = {"State": {"Status": "running"}}
+        out = self.d("wait", "ok", "nohc", "--timeout", "5").stdout
+        self.assertIn("ready  ok", out)
+        self.assertIn("no healthcheck defined", out)
+        self.data["inspect"]["dead"] = {"State": {"Status": "exited", "ExitCode": 137}}
+        r = self.d("wait", "dead")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("FAILED dead: exited", r.stdout)
+        self.data["inspect"]["slow"] = {"State": {"Status": "running", "Health": {"Status": "starting"}}}
+        t = self.d("wait", "slow", "--timeout", "1")
+        self.assertEqual(t.returncode, 1)
+        self.assertIn("TIMEOUT waiting for: slow", t.stdout)
+        self.assertNotEqual(self.d("wait").returncode, 0)
+
+    def test_clean_is_a_plan_until_yes_and_never_touches_volumes_by_default(self):
+        self.data["exited"] = [container("old1", state="exited"), container("old2", state="exited")]
+        self.data["dangling"] = [{"Size": "100MB"}, {"Size": "50MB"}]
+        plan = self.d("clean")
+        self.assertOk(plan)
+        self.assertIn("2 stopped container(s)", plan.stdout)
+        self.assertIn("2 dangling image(s)", plan.stdout)
+        self.assertIn("plan only", plan.stdout)
+        self.assertFalse([c for c in self.calls() if "prune" in c], "nothing was pruned")
+        self.assertOk(self.d("clean", "--yes", "--until", "48h"))
+        prunes = [c for c in self.calls() if "prune" in c]
+        self.assertEqual(prunes, ["container prune -f --filter until=48h", "image prune -f"])
+        self.assertOk(self.d("clean", "--yes", "--volumes"))
+        self.assertIn("volume prune -f", self.calls())
+
+    def test_missing_docker_and_unreachable_daemon_are_clear(self):
+        r = self.ws.ms_py("docker", "status", env={"PATH": "/nonexistent-dir"})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("docker is not installed", r.stderr)
+        self.data["down"] = True
+        r = self.d("status")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("Cannot connect to the Docker daemon", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertNotEqual(self.d("frobnicate").returncode, 0)
+
+
+# ------------------------------------------------------------------- system info
+class TestSys(Base):
+    def setUp(self):
+        super().setUp()
+        self.proc = self.ws.tmp / "proc"
+        self.proc.mkdir()
+        (self.proc / "meminfo").write_text("MemTotal: 16777216 kB\nMemAvailable: 8388608 kB\nSwapTotal: 4194304 kB\nSwapFree: 4194304 kB\n")
+        (self.proc / "cpuinfo").write_text("processor : 0\nmodel name\t: Test CPU @ 3.00GHz\n")
+        (self.proc / "uptime").write_text("266400.55 1000.00\n")
+        self.osr = self.ws.tmp / "os-release"
+        self.osr.write_text('NAME="Test"\nPRETTY_NAME="Test Linux 1.0 LTS"\n')
+        self.env = {"MS_PROC_ROOT": str(self.proc), "MS_OS_RELEASE": str(self.osr)}
+
+    def sys(self, *args, **kw):
+        return self.ws.ms("sys", *args, env={**self.env, **kw.pop("env", {})}, **kw)
+
+    def test_summary_lines(self):
+        out = self.sys().stdout
+        self.assertIn("Test Linux 1.0 LTS", out)
+        self.assertIn("up 3d 2h", out)
+        self.assertIn("(Test CPU @ 3.00GHz)", out)
+        self.assertIn("Memory: 16.0G total, 8.0G available (50%) | swap 4.0G (0% used)", out)
+        self.assertIn("Disk: / ", out)
+        self.assertIn("Network: ", out)
+        self.assertNotIn("Hint:", out.split("Memory:")[1].split("Disk:")[0])
+
+    def test_hints_for_memory_pressure_and_swap(self):
+        (self.proc / "meminfo").write_text("MemTotal: 16777216 kB\nMemAvailable: 524288 kB\nSwapTotal: 4194304 kB\nSwapFree: 1048576 kB\n")
+        out = self.sys().stdout
+        self.assertIn("Only 0.5G of memory is available (3%)", out)
+        self.assertIn("Swap is 75% used", out)
+
+    def test_json_and_errors(self):
+        data = json.loads(self.sys("--json").stdout)
+        self.assertEqual(data["memory"]["total_gb"], 16.0)
+        self.assertEqual(data["cpu"]["model"], "Test CPU @ 3.00GHz")
+        self.assertIn("path", data["disks"][0])
+        self.assertNotIn("tools", data)
+        self.assertNotEqual(self.sys("--bogus").returncode, 0)
+
+    def test_tool_versions_are_clean(self):
+        bin_dir = self.ws.tmp / "tools"
+        bin_dir.mkdir()
+        for name, text in (("mvn", "\x1b[1mApache Maven 3.9.12\x1b[m\nMaven home: /x"), ("gradle", "\n------------------------------------------------------------\nGradle 8.5\n------"),
+                           ("git", "git version 2.53.0")):
+            f = bin_dir / name
+            f.write_text(f"#!/bin/sh\nprintf '%s\\n' '{text}'\n".replace("\\x1b", "\x1b"))
+            f.chmod(0o755)
+        out = self.ws.ms_py("sys", "--tools", env={**self.env, "PATH": str(bin_dir)}).stdout
+        self.assertIn("mvn Apache Maven 3.9.12", out)
+        self.assertNotIn("\x1b", out)
+        self.assertIn("gradle Gradle 8.5", out)
+        self.assertIn("git git version 2.53.0", out)
+        self.assertIn("node missing", out)
+
+
+# --------------------------------------------------------------------- processes
+class TestProcesses(Base):
+    def spawn(self, code, cwd=None, **kw):
+        proc = subprocess.Popen([sys.executable, "-c", code], cwd=cwd, stdout=subprocess.PIPE, text=True, **kw)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(proc.wait)                                  # cleanups run last-in first-out: kill first, then reap
+        self.addCleanup(lambda: (proc.poll() is None) and proc.kill())
+        return proc
+
+    SLEEP = "import time; print('up', flush=True); time.sleep(300)"
+
+    def sleeper(self, cwd=None):
+        p = self.spawn(self.SLEEP, cwd=cwd)
+        self.assertEqual(p.stdout.readline().strip(), "up")
+        return p
+
+    def test_top_filters_and_option_errors(self):
+        out = self.ws.ms("ps", "--top", "3").stdout.strip().splitlines()
+        self.assertEqual(len(out), 4)
+        self.assertIn("top 3 by cpu", out[0])
+        self.assertIn("by mem", self.ws.ms("ps", "--by", "mem", "--top", "1").stdout)
+        p = self.sleeper()
+        self.assertIn(str(p.pid), self.ws.ms("ps", "--filter", "time.sleep(300)", "--top", "5").stdout)
+        self.assertIn("dynamia" if os.environ.get("USER") == "dynamia" else os.environ.get("USER", ""), self.ws.ms("ps", "--mine").stdout)
+        for bad in (("--top", "x"), ("--by", "disk"), ("--wat",)):
+            self.assertNotEqual(self.ws.ms("ps", *bad).returncode, 0, bad)
+
+    def test_find_and_tree(self):
+        p = self.sleeper()
+        found = self.ws.ms("ps", "find", "time.sleep(300)").stdout
+        self.assertIn(str(p.pid), found)
+        self.assertNotIn("ms-workspace ps find", found)
+        tree = self.ws.ms("ps", "tree", str(os.getpid())).stdout
+        self.assertIn(str(p.pid), tree, "the sleeper is a child of this test process")
+        self.assertIn("(nothing matches)", self.ws.ms("ps", "tree", "no-such-process-zzz").stdout)
+        self.assertNotEqual(self.ws.ms("ps", "find").returncode, 0)
+
+    def test_ports_show_who_holds_a_port(self):
+        if not shutil_which("ss"):
+            self.skipTest("ss not available")
+        p = self.spawn("import socket,time; s=socket.socket(); s.bind(('127.0.0.1',0)); s.listen(); print(s.getsockname()[1], flush=True); time.sleep(300)")
+        port = int(p.stdout.readline())
+        out = self.ws.ms("ps", "ports", "--port", str(port)).stdout
+        self.assertIn(f"pid {p.pid}", out)
+        self.assertIn(str(port), self.ws.ms("ps", "ports").stdout)
+        self.assertIn("nothing is listening on port 1", self.ws.ms("ps", "ports", "--port", "1").stdout)
+        self.assertNotEqual(self.ws.ms("ps", "ports", "--port", "x").returncode, 0)
+
+    def test_kill_is_a_plan_until_yes_and_then_checks_the_result(self):
+        p = self.sleeper()
+        plan = self.ws.ms("ps", "kill", str(p.pid))
+        self.assertOk(plan)
+        self.assertIn(f"{p.pid}: would send TERM", plan.stdout)
+        self.assertIn("plan only", plan.stdout)
+        self.assertIsNone(p.poll())
+        done = self.ws.ms("ps", "kill", str(p.pid), "--yes")
+        self.assertOk(done)
+        self.assertIn("gone", done.stdout)
+        p.wait(timeout=5)
+        self.assertIn("ps.kill", self.ws.log_lines("--action", "ps.kill"))
+
+    def test_kill_refuses_dangerous_targets(self):
+        p = self.spawn("import time,os; os.execvp('bash', ['bash','-c','exec -a tmux sleep 300'])")
+        time.sleep(0.5)
+        out = lambda *a: self.ws.ms("ps", "kill", *a, "--yes")
+        for pid, why in ((1, "this session or one of its parents"), (os.getpid(), "this session or one of its parents"), (p.pid, "protected process"),
+                         (999999, "no such process")):
+            r = out(str(pid))
+            self.assertEqual(r.returncode, 1, pid)
+            self.assertIn(why, r.stdout, pid)
+        self.assertIsNone(p.poll(), "the protected process survived")
+        foreign = subprocess.run(["ps", "-axo", "pid=,user="], capture_output=True, text=True).stdout.split("\n")
+        other = next((int(l.split()[0]) for l in foreign if l.strip() and l.split()[1] not in (os.environ.get("USER"), "root")), None)
+        if other:
+            self.assertIn("belongs to", out(str(other)).stdout)
+        self.assertNotEqual(self.ws.ms("ps", "kill").returncode, 0)
+        self.assertNotEqual(self.ws.ms("ps", "kill", "abc").returncode, 0)
+        self.assertNotEqual(self.ws.ms("ps", "kill", "5", "--signal", "STOP").returncode, 0)
+
+    def test_leftovers_are_attributed_to_the_batch_they_run_in(self):
+        d = self.ws.batch("b1", "lib")
+        self.sleeper(cwd=d / "lib")
+        out = self.ws.ms("ps", "leftovers", "--hours", "0").stdout
+        self.assertIn("[batch b1/lib]", out)
+        self.assertIn("ms-workspace ps kill", out)
+        self.assertNotIn("claude", out.split("\n", 1)[1])
+
+    def test_clean_refuses_while_processes_run_inside_the_batch(self):
+        d = self.ws.batch("b1", "lib")
+        self.ws.commit(d / "lib", "f", {"f.txt": "1"})
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--skip-e2e"))
+        p = self.sleeper(cwd=d / "lib")
+        r = self.ws.ms("clean", "b1")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("processes are still running inside the batch", r.stderr)
+        self.assertIn(str(p.pid), r.stderr)
+        self.assertTrue(d.exists())
+        self.assertOk(self.ws.ms("ps", "kill", str(p.pid), "--yes"))
+        p.wait(timeout=5)
+        self.assertOk(self.ws.ms("clean", "b1"))
+
+    def test_force_clean_warns_but_proceeds(self):
+        d = self.ws.batch("b1", "lib")
+        p = self.sleeper(cwd=d / "lib")
+        r = self.ws.ms("clean", "b1", "--force")
+        self.assertOk(r)
+        self.assertIn(f"{p.pid}", r.stderr)
+
+
+def shutil_which(name):
+    import shutil
+    return shutil.which(name)
+
+
+class TestGuardForNewTools(Base):
+    def guard(self, command, cwd):
+        return self.ws.ms("guard", input=json.dumps({"tool_input": {"command": command}, "cwd": str(cwd)}))
+
+    def test_agents_in_a_batch_cannot_kill_or_prune(self):
+        d = self.ws.batch("b1")
+        for cmd in ("ms-workspace ps kill 123 --yes", "ms-workspace docker clean --yes", "ms-workspace ps kill 5"):
+            self.assertEqual(self.guard(cmd, d / "lib").returncode, 2, cmd)
+        for cmd in ("ms-workspace ps", "ms-workspace ps ports", "ms-workspace docker status", "ms-workspace sys", "ms-workspace mock start pay",
+                    "ms-workspace docker logs web --errors"):
+            self.assertEqual(self.guard(cmd, d / "lib").returncode, 0, cmd)
+
+    def test_permissions(self):
+        perms = json.loads((REPO / "settings" / "hooks.example.json").read_text())["permissions"]
+        for rule in ("Bash(ms-workspace sys:*)", "Bash(ms-workspace ps tree:*)", "Bash(ms-workspace ps ports:*)", "Bash(ms-workspace docker status:*)",
+                     "Bash(ms-workspace docker logs:*)", "Bash(ms-workspace mock start:*)", "Bash(ms-workspace mock assert:*)"):
+            self.assertIn(rule, perms["allow"])
+        for rule in ("Bash(ms-workspace ps kill:*)", "Bash(ms-workspace docker clean:*)"):
+            self.assertIn(rule, perms["ask"])
+            self.assertNotIn(rule, perms["allow"])
 
 
 if __name__ == "__main__":

@@ -105,7 +105,29 @@
       "Bash(ms-workspace http list:*)",
       "Bash(ms-workspace http history:*)",
       "Bash(ms-workspace http show:*)",
-      "Bash(ms-workspace http diff:*)"
+      "Bash(ms-workspace http diff:*)",
+      "Bash(ms-workspace mock start:*)",
+      "Bash(ms-workspace mock stop:*)",
+      "Bash(ms-workspace mock status:*)",
+      "Bash(ms-workspace mock url:*)",
+      "Bash(ms-workspace mock list:*)",
+      "Bash(ms-workspace mock requests:*)",
+      "Bash(ms-workspace mock assert:*)",
+      "Bash(ms-workspace docker status:*)",
+      "Bash(ms-workspace docker logs:*)",
+      "Bash(ms-workspace docker stats:*)",
+      "Bash(ms-workspace docker disk:*)",
+      "Bash(ms-workspace docker health:*)",
+      "Bash(ms-workspace docker ports:*)",
+      "Bash(ms-workspace docker env:*)",
+      "Bash(ms-workspace docker wait:*)",
+      "Bash(ms-workspace sys:*)",
+      "Bash(ms-workspace ps)",
+      "Bash(ms-workspace ps --:*)",
+      "Bash(ms-workspace ps tree:*)",
+      "Bash(ms-workspace ps find:*)",
+      "Bash(ms-workspace ps ports:*)",
+      "Bash(ms-workspace ps leftovers:*)"
     ],
     "ask": [
       "Bash(ms-workspace ship:*)",
@@ -114,7 +136,9 @@
       "Bash(ms-workspace setup-hooks:*)",
       "Bash(ms-workspace undo:*)",
       "Bash(ms-workspace http run:*)",
-      "Bash(ms-workspace http bench:*)"
+      "Bash(ms-workspace http bench:*)",
+      "Bash(ms-workspace docker clean:*)",
+      "Bash(ms-workspace ps kill:*)"
     ]
   }
 }

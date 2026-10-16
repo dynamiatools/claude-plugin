@@ -77,8 +77,8 @@ Names are validated, and a failed `batch new` or `agent new` rolls back what it 
 
 ## Guardrails
 
-- **Permissions are narrow on purpose.** `allow` covers read-only and local subcommands (`status`, `log`, `usage`, `plan`, `test`, `integrate`, `batch new`, ...). `ship`, `undo`, `clean`, `env` and `setup-hooks` are in `ask`, so Claude Code always prompts before anything is pushed, deleted or run from configuration. `setup-hooks` replaces an older broad `Bash(ms-workspace:*)` rule.
-- **The guard** (`ms-workspace guard`, a PreToolUse hook) blocks `git push`, `gh pr create|merge`, `gh api` writes, `ms-workspace ship|undo|clean|setup-hooks` and `env --setup` **inside batch worktrees**, including option variants, `bash -c`, `eval`, wrappers and `cd` into a batch from elsewhere. It fails closed: inside `.batches/` it decides from the command text alone, so a broken `workspace.toml` cannot open the gate. It stops mistakes and realistic variants, not a determined adversary. Blocked attempts are logged.
+- **Permissions are narrow on purpose.** `allow` covers read-only and local subcommands (`status`, `log`, `usage`, `plan`, `test`, `integrate`, `batch new`, ...). `ship`, `undo`, `clean`, `env`, `setup-hooks`, `docker clean`, `ps kill` and `http run|bench` are in `ask`, so Claude Code always prompts before anything is pushed, deleted or run from configuration. `setup-hooks` replaces an older broad `Bash(ms-workspace:*)` rule.
+- **The guard** (`ms-workspace guard`, a PreToolUse hook) blocks `git push`, `gh pr create|merge`, `gh api` writes, `ms-workspace ship|undo|clean|setup-hooks`, `ps kill`, `docker clean` and `env --setup` **inside batch worktrees**, including option variants, `bash -c`, `eval`, wrappers and `cd` into a batch from elsewhere. It fails closed: inside `.batches/` it decides from the command text alone, so a broken `workspace.toml` cannot open the gate. It stops mistakes and realistic variants, not a determined adversary. Blocked attempts are logged.
 - **Plan usage.** Claude Code exposes the 5h session and weekly usage only to the status line, so `ms-statusline` stores a snapshot and `ms-workspace usage` reads it: percent used and left, time to reset, pace, projection and a verdict. `usage --check` exits 0 ok, 1 warn, 2 critical, 3 no data, so skills and agents confirm with you before starting; `--need <pct|auto>` checks that a planned task fits (`auto` uses the median of past completed batches, at least 3). Thresholds come from `[usage]` in `workspace.toml` (default 70/90). Projections only influence the verdict above 50 % used. Pro/Max plans only; data appears after the first reply of a session.
 - **Token-saving hooks.** `readguard` (PreToolUse on Read) tells Claude when it is about to re-read an unchanged file that is already in its context (files under 4 000 characters are ignored; a compaction or `/clear` resets the memory, because re-reading is legitimate then). `outguard` (PostToolUse on Bash) replaces a Bash output longer than 30 000 characters with its first and last 60 lines, saves the full text to a file it names, and keeps `stderr` and the output shape. Tune it with `[context] bash_output_max_chars`, `MS_OUTGUARD_MAX_CHARS`, or turn it off with `MS_OUTGUARD=off`. Neither hook can fail a session.
 - **Memory.** The log says what happened; `ms-workspace memory` keeps what was learned: one markdown note per fact (`decision`, `lesson`, `gotcha`, `handoff`) with `add`, `list`, `search`, `show`, `forget`. If an agent must stop early it leaves a handoff for the next session; `context` shows only a count and the latest handoff of each active batch, so it costs a few tokens. Handoffs disappear with their batch.
@@ -113,6 +113,47 @@ ms-workspace http list
 - **Secrets stay out of logs and output**: `{{secret:...}}` values, sensitive headers (`Authorization`, `Cookie`, `*token*`, `*password*`, `*api-key*`), such JSON keys in request and response bodies, and such query parameters are replaced by `***`. The log is `<workspace>/.ms-workspace/http/YYYY-MM-DD.jsonl`; bodies are cut at 4 000 characters. Outside a workspace the log goes to `~/.cache/ms-workspace/http/`.
 - **Safety**: an environment file with `confirm = true` (qa, prod) refuses to run without `--yes` and refuses `bench`. Redirects are not followed unless a request sets `follow_redirects = true`; `insecure = true` accepts self-signed certificates. Permissions: `list`, `history`, `show`, `diff` are allowed; `run` and `bench` always ask, because they send traffic.
 - **Smoke checks before shipping**: `[http] smoke = "smoke"` and `smoke_env = "local"` in `workspace.toml` make `ship --yes` run that collection after t1 and before e2e; a failure blocks the push (`--skip-smoke` bypasses it deliberately). `plan` shows the line.
+
+## Local tools: mock server, Docker, system, processes
+
+**Mock server** (`ms-workspace mock`). A local stand-in for third-party APIs (payments, tax authority) that records every call, so you can test without the real service and then assert what your code sent. Definitions live in `mocks/*.mock.toml` (example: `skills/ms-workspace-init/references/mocks/`).
+
+```bash
+ms-workspace mock start payments        # background server on 127.0.0.1 (free port, or port = N / --port N); --restart reloads the file
+ms-workspace mock url payments          # feed it to the app, or: ms-workspace http run smoke --var base_url=$(ms-workspace mock url)
+ms-workspace mock requests --unmatched  # what was received (masked); -n, --path, --method
+ms-workspace mock assert --path /v1/payments --method POST --times 1 --json amount=100   # exit 1 with the closest candidates if it does not hold
+ms-workspace mock status | list | stop [--all]
+```
+
+Routes match top to bottom (method, `{param}` or trailing `*` path, optional `match` on JSON body, query and headers). Responses: `status`, `json` or `body`, `headers`, `delay_ms`, and `sequence` for retries and flaky providers (the last step repeats, or cycles with `loop = true`). Templates `{{path.id}}`, `{{query.x}}`, `{{body.a.b}}`, `{{header.x}}`, `{{seq}}`, `{{uuid}}`, `{{now}}`; a value that is exactly one placeholder keeps its JSON type. Requests that match no route get a 404 and are recorded, so `assert --no-unmatched` catches calls you did not plan for. The log masks secrets like the `http` tool does.
+
+**Docker** (`ms-workspace docker`), compact and read-only except `clean --yes`:
+
+| Command | What it shows |
+|---|---|
+| `status [-a] [--project P]` | One line per container (image, state, short ports, compose project), plus unhealthy and stopped ones |
+| `logs <c> [-n N] [--since 10m] [--errors]` | Last lines with timestamps stripped and repeats collapsed (`(x37)`); `--errors` keeps only error-like lines |
+| `stats` | CPU and memory per container, heaviest first, flagged above 80 % |
+| `disk` | Space by images, containers, volumes and build cache, and how much is reclaimable |
+| `health <c...>` | Health state, last three check outputs, restarts, exit code, OOM kill |
+| `ports`, `env <c>` | Published ports; environment variables with sensitive values masked |
+| `wait <c...> [--timeout 120]` | Blocks until healthy (or running, when there is no healthcheck); exit 1 on failure or timeout |
+| `clean [--until 24h] [--yes] [--volumes]` | Plan of stopped containers and dangling images; `--yes` prunes them; volumes only with `--volumes` |
+
+**System** (`ms-workspace sys [--tools] [--json]`): OS, kernel, uptime, CPU and load per core, memory and swap, disks (root, `/tmp`, the workspace), network address, timezone, and with `--tools` the versions of git, gh, python, node, java, maven, gradle, docker and others. It adds a hint when memory is under 10 % available, swap is over half used, load per core is above 1.5 or a disk is nearly full. Linux first; macOS is best effort.
+
+**Processes** (`ms-workspace ps`):
+
+| Command | What it does |
+|---|---|
+| `ps [--top N] [--by cpu\|mem] [--mine] [--filter text]` | Heaviest processes (CPU is `ps`'s average since start) |
+| `ps tree <pid\|text>`, `ps find <text>` | A process with its children; processes whose command contains the text |
+| `ps ports [--port N] [--all]` | Listening TCP ports with their owner, and which workspace batch it runs in; `--port 8080` answers "who holds it" |
+| `ps leftovers [--hours 4]` | Dev processes (java, node, mvn, python, cloudflared...) that are old or orphaned, labelled with the batch they run in |
+| `ps kill <pid...> [--signal TERM] [--yes]` | Plan first. Refuses other users' processes, this session and its parents, pid 1, and protected ones (systemd, sshd, tmux, claude); `--yes` sends the signal and checks that it worked |
+
+`clean` refuses to remove a batch while a process still runs inside it (`--force` overrides with a warning). On a shared server, `ps`, `docker` and `sys` only ever act on what the current user may touch.
 
 ## The workspace
 
@@ -158,7 +199,7 @@ python3 -m unittest tests.test_ms_workspace.TestShip -v
 ## Roadmap
 
 - [x] API checks (`ms-workspace http`) with assertions, masked logs, diff and bench
-- [ ] A local mock server for third-party APIs (payments, tax authority) that records what it receives
+- [x] Local mock server, Docker views, system information and process tools
 - [ ] First end-to-end run on real repos (Maven, pnpm, Gradle) and a live check of the image hook
 - [ ] Exact integration plan across agents (merge-tree chain) instead of per-branch `--dry-run`
 - [ ] Secret and large-file gate before `ship`

@@ -38,6 +38,10 @@ Usage:
   ms-workspace readguard / outguard          token-saving hooks: warn on re-reading an unchanged file; shorten huge Bash output
   ms-workspace http run <file> [--env E] ...  API checks from requests/*.http.toml: assertions, captured variables, a log of every exchange
   ms-workspace http list|history|show|diff|bench   see the files, past runs, one exchange, what changed between runs, latency percentiles
+  ms-workspace mock start|stop|status|url|list|requests|assert   local mock server for third-party APIs (mocks/*.mock.toml) that records every call
+  ms-workspace docker status|logs|stats|disk|health|ports|env|wait|clean   compact Docker views; only `clean --yes` changes anything
+  ms-workspace sys [--tools] [--json]        OS, CPU, memory, disk, network in a few lines, with hints when something looks wrong
+  ms-workspace ps [tree|find|ports|leftovers|kill]   processes: heavy ones, who holds a port, what was left running, guarded kill
   ms-workspace doctor                        check tools, versions, resources and workspace.toml
   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 
@@ -86,6 +90,18 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd == "outguard":
         from .hooks import cmd_outguard
         return cmd_outguard()
+    if cmd == "docker":
+        from .dockertools import cmd_docker
+        return cmd_docker(Workspace.load(required=False), args)
+    if cmd == "sys":
+        from .sysinfo import cmd_sys
+        return cmd_sys(Workspace.load(required=False), args)
+    if cmd == "ps":
+        from .procs import cmd_ps
+        return cmd_ps(Workspace.load(required=False), args)
+    if cmd == "mock":
+        from .mock import cmd_mock
+        return cmd_mock(Workspace.load(required=False), args)
     if cmd == "http":
         from .apitest import cmd_http
         return cmd_http(Workspace.load(required=False), args)

@@ -410,6 +410,13 @@ def cmd_clean(ws: Workspace, args: list[str]) -> int:
                 die(f"{r}: agent branches not integrated into int/{batch}: {', '.join(pending)} (integrate them, or use --force to discard)")
             if not _merged(ws, batch, r):
                 die(f"{r}: int/{batch} is not merged into {ws.base(r)} yet (use --force to discard)")
+    from .procs import procs_in_dir
+    running = procs_in_dir(ws.batch_dir / batch)
+    if running:
+        listing = "; ".join(f"{pid} ({cmd})" for pid, cmd in running[:5])
+        if not force:
+            die(f"processes are still running inside the batch: {listing}. Stop them (ms-workspace ps kill <pid> --yes) or use --force")
+        eprint(f"warning: removing the batch while these processes run in it: {listing}")
     flags = ["--force"] if force else []
     for r in repos:
         main_wt = ws.batch_dir / batch / r

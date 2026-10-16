@@ -1,0 +1,39 @@
+# mocks/payments.mock.toml - run with:  ms-workspace mock start payments        (listens on 127.0.0.1 only)
+#   point your app (or `ms-workspace http run smoke --var base_url=$(ms-workspace mock url payments)`) at the printed URL, then:
+#   ms-workspace mock requests            what the app sent
+#   ms-workspace mock assert --path /v1/payments --method POST --times 1 --json amount=100
+# Routes match top to bottom; the first one that fits wins. Unmatched requests get a 404 and are recorded.
+# Templates: {{path.id}} {{query.x}} {{body.a.b}} {{header.x-name}} {{seq}} {{uuid}} {{now}}
+# A value that is exactly one placeholder keeps its JSON type ("{{body.amount}}" stays a number).
+# port = 9101        # optional fixed port; by default a free one is chosen
+
+[[route]]
+name = "create-payment"
+method = "POST"
+path = "/v1/payments"
+status = 201
+json = { id = "pay_{{seq}}", amount = "{{body.amount}}", status = "approved", created = "{{now}}" }
+
+[[route]]
+name = "declined-card"                    # extra conditions: match on body, query or headers
+method = "POST"
+path = "/v1/payments"
+match = { json = { "card.number" = "4000000000000002" } }
+status = 402
+json = { error = "card_declined" }
+
+[[route]]
+name = "get-payment"
+path = "/v1/payments/{id}"
+json = { id = "{{path.id}}", status = "approved" }
+
+[[route]]
+name = "flaky-provider"                   # retry behaviour: 503, 503, then 200 forever (add loop = true to cycle)
+path = "/v1/ping"
+sequence = [ { status = 503 }, { status = 503, headers = { Retry-After = "1" } }, { status = 200, json = { ok = true } } ]
+
+[[route]]
+name = "slow-provider"
+path = "/v1/report"
+delay_ms = 1500
+body = "done"
