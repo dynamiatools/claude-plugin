@@ -131,7 +131,7 @@ cmd_affected() {
     . as $c
     | def down($s): ($c.repos | to_entries | map(select(.value.deps as $d | any($s[]; . as $x | $d | index($x)))) | map(.key)) as $new
         | if ($new - $s | length) == 0 then $s else down(($s + $new) | unique) end;
-    {repo:$r, files:$n, modules:$mods, dependents:(down([$r]) - [$r])}' "$CFG"
+    {repo:$r, files:$n, modules:$mods, dependents:(down([$r]) - [$r])}' <<<"$CFG_JSON"
 }
 
 # ---------- test ----------
