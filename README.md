@@ -9,6 +9,7 @@ The goal is simple: on a fresh machine, clone this repo, run the setup, and have
 ```
 my-claude/
 ├── install.sh       # One-step setup after cloning
+├── bin/             # CLI tools (-> ~/.local/bin/), e.g. ms-workspace
 ├── skills/          # Reusable skills   (-> ~/.claude/skills/)
 ├── agents/          # Custom subagents  (-> ~/.claude/agents/)   [planned]
 ├── CLAUDE.md        # Global instructions (-> ~/.claude/CLAUDE.md) [planned]
@@ -26,6 +27,14 @@ All skills use the `ms-` prefix (so they never collide with other skills).
 | `/ms-git-status` | Prints a compact, read-only status card of the current git repo |
 | `/ms-workspace-init` | Builds a multi-repo workspace from scratch (clones repos, detects stacks, writes `workspace.json`) |
 
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `ms-workspace` | Mechanical helper for the multi-repo batch workflow. Skills and hooks call it so the model spends no tokens on git/test plumbing. Implemented so far: `lote nuevo`, `afectados`, `test t0`, `log` |
+
+`ms-workspace` keeps an action log in `<workspace>/.ms-workspace/logs/YYYY-MM-DD.jsonl` (one JSON line per action, one file per day, old files pruned after `log_retention_days`, default 14). Read it with `ms-workspace log [-n N] [--day D] [--action A]`.
+
 ## Quick start (new machine)
 
 ```bash
@@ -39,7 +48,7 @@ cd ~/IdeaProjects/my-claude
 - `./install.sh --dry-run` shows what would change without touching anything.
 - `./install.sh --uninstall` removes only the links that point to this repo.
 - Existing files with the same name are moved to `~/.claude/backups/my-claude-<timestamp>/`, never deleted.
-- Set `CLAUDE_HOME` to target a directory other than `~/.claude`.
+- Set `CLAUDE_HOME` / `BIN_DIR` to target directories other than `~/.claude` / `~/.local/bin`.
 - It also checks for `git`, `jq`, `tmux`, `gh`, `node` and `claude` and warns about missing ones.
 
 Start a new Claude Code session afterwards so the skills are picked up.

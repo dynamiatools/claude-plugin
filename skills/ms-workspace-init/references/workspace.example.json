@@ -2,6 +2,7 @@
   "name": "example",
   "root": "~/IdeaProjects/example",
   "tasks": "local",
+  "log_retention_days": 14,
   "repos": {
     "core-lib": {
       "url": "git@github.com:org/core-lib.git",

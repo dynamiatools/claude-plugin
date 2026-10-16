@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# ms-workspace: mechanical helper for the multi-repo batch workflow.
+# Reads <workspace>/workspace.json (created by the ms-workspace-init skill).
+# Deterministic on purpose: skills and hooks call it so the model does not
+# have to spend tokens on git/test plumbing.
+#
+# Usage:
+#   ms-workspace lote nuevo <name> [repo...]   create a batch (one worktree per repo, branch int/<name>)
+#   ms-workspace afectados                     JSON: changed repos/modules and their dependents
+#   ms-workspace test t0                       test what changed in the current repo
+#   ms-workspace log [-n N] [--day YYYY-MM-DD] [--action A]   show recent actions
+#
+# Workspace discovery: $MS_WORKSPACE, else the nearest parent holding workspace.json.
+set -euo pipefail
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+command -v jq >/dev/null || die "jq is required"
+
+find_ws() {
+  local d="${MS_WORKSPACE:-$PWD}"
+  while [[ "$d" != "/" ]]; do
+    [[ -f "$d/workspace.json" ]] && { echo "$d"; return 0; }
+    d="$(dirname "$d")"
+  done
+  return 1
+}
+WS_ROOT="$(find_ws)" || die "no workspace.json found (run the ms-workspace-init skill first)"
+CFG="$WS_ROOT/workspace.json"
+STATE_DIR="$WS_ROOT/.ms-workspace"
+LOG_DIR="$STATE_DIR/logs"
+BATCH_DIR="$WS_ROOT/.batches"
+
+cfg() { jq -r "$@" "$CFG"; }
+
+# ---------- logging: one JSON line per action, one file per day ----------
+log_event() { # action status repo batch detail
+  local file today
+  today="$(date +%F)"; file="$LOG_DIR/$today.jsonl"
+  mkdir -p "$LOG_DIR"
+  if [[ ! -f "$file" ]]; then # first write of the day: rotate old files
+    find "$LOG_DIR" -name '*.jsonl' -mtime +"$(cfg '.log_retention_days // 14')" -delete 2>/dev/null || true
+  fi
+  jq -cn --arg ts "$(date -Is)" --arg action "$1" --arg status "$2" \
+        --arg repo "${3:-}" --arg batch "${4:-}" --arg detail "${5:-}" \
+        '{ts:$ts,action:$action,status:$status,repo:$repo,batch:$batch,detail:$detail}' >> "$file"
+}
+
+cmd_log() {
+  local n=20 day="" action=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -n) n="$2"; shift 2 ;;
+      --day) day="$2"; shift 2 ;;
+      --action) action="$2"; shift 2 ;;
+      *) die "log: unknown option $1" ;;
+    esac
+  done
+  [[ -d "$LOG_DIR" ]] || { echo "(no log yet)"; return 0; }
+  local files
+  if [[ -n "$day" ]]; then files="$LOG_DIR/$day.jsonl"; [[ -f "$files" ]] || { echo "(no log for $day)"; return 0; }
+  else files="$(ls -1 "$LOG_DIR"/*.jsonl 2>/dev/null | sort)"; fi
+  [[ -n "$files" ]] || { echo "(no log yet)"; return 0; }
+  # shellcheck disable=SC2086
+  cat $files | jq -c --arg a "$action" 'select($a=="" or .action==$a)' | tail -n "$n" \
+    | jq -r '[.ts[0:19], .status, .action, .repo, .batch, .detail] | map(select(.!="")) | join(" | ")'
+}
+
+# ---------- helpers ----------
+repo_names() { cfg '.repos | keys[]'; }
+repo_base()  { cfg --arg r "$1" '.repos[$r].base // "main"'; }
+
+# Echo the repo name of the git toplevel containing the cwd.
+current_repo() {
+  local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repo"
+  basename "$top"
+}
+
+# Nearest-pom modules for the files changed in the current repo vs its base.
+changed_files() { # base
+  local mb
+  mb="$(git merge-base HEAD "origin/$1" 2>/dev/null || git merge-base HEAD "$1" 2>/dev/null || echo HEAD)"
+  { git diff --name-only "$mb"; git ls-files -o --exclude-standard; } | sort -u
+}
+modules_of() { # reads file list on stdin, run from repo top
+  [[ -f pom.xml ]] || { cat >/dev/null; return 0; }
+  local f d
+  while IFS= read -r f; do
+    [[ -z "$f" ]] && continue
+    d="$(dirname "$f")"
+    while [[ "$d" != "." && ! -f "$d/pom.xml" ]]; do d="$(dirname "$d")"; done
+    echo "$d"
+  done | sort -u
+}
+
+# ---------- lote nuevo ----------
+cmd_lote() {
+  [[ "${1:-}" == "nuevo" ]] || die "usage: lote nuevo <name> [repo...]"; shift
+  local name="${1:?lote nuevo <name> [repo...]}"; shift
+  local repos=("$@"); [[ ${#repos[@]} -gt 0 ]] || mapfile -t repos < <(repo_names)
+  local dir="$BATCH_DIR/$name"
+  [[ ! -e "$dir" ]] || die "batch '$name' already exists at $dir"
+  mkdir -p "$dir"
+  local r base src start
+  for r in "${repos[@]}"; do
+    src="$WS_ROOT/$r"; base="$(repo_base "$r")"
+    if [[ ! -d "$src/.git" ]]; then log_event lote.nuevo error "$r" "$name" "repo not found at $src"; die "repo '$r' not found at $src"; fi
+    git -C "$src" fetch origin "$base" --quiet 2>/dev/null || echo "warn: could not fetch $r/$base (using local ref)" >&2
+    start="origin/$base"; git -C "$src" rev-parse --verify --quiet "$start" >/dev/null || start="$base"
+    git -C "$src" worktree add --no-track -b "int/$name" "$dir/$r" "$start" >/dev/null 2>&1 \
+      || { log_event lote.nuevo error "$r" "$name" "worktree add failed"; die "could not create worktree for $r (branch int/$name may exist)"; }
+    log_event lote.nuevo ok "$r" "$name" "int/$name from $start"
+    echo "  $r -> $dir/$r (int/$name from $start)"
+  done
+  printf '# Batch: %s\n\nRepos: %s\n\n## Tasks\n- [ ] \n' "$name" "${repos[*]}" > "$dir/TASKS.md"
+  echo "Batch ready: $dir"
+}
+
+# ---------- afectados ----------
+cmd_afectados() {
+  local top repo base files mods
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run inside a repo or batch worktree"
+  repo="$(basename "$top")"; base="$(repo_base "$repo")"
+  cd "$top"
+  files="$(changed_files "$base")"
+  mods="$(printf '%s\n' "$files" | modules_of | jq -R . | jq -sc 'map(select(length>0))')"
+  # Downstream repos: anything depending (transitively) on this repo.
+  jq -c --arg r "$repo" --argjson mods "$mods" --argjson n "$(printf '%s\n' "$files" | grep -c . || true)" '
+    . as $c
+    | def down($s): ($c.repos | to_entries | map(select(.value.deps as $d | any($s[]; . as $x | $d | index($x)))) | map(.key)) as $new
+        | if ($new - $s | length) == 0 then $s else down(($s + $new) | unique) end;
+    {repo:$r, files:$n, modules:$mods, dependents:(down([$r]) - [$r])}' "$CFG"
+}
+
+# ---------- test ----------
+cmd_test() {
+  local level="${1:-}"
+  [[ "$level" == "t0" ]] || die "only 't0' is implemented so far"
+  local top repo base mods cmd start rc out
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || die "run inside a repo or batch worktree"
+  repo="$(basename "$top")"; base="$(repo_base "$repo")"
+  cd "$top"
+  mods="$(changed_files "$base" | modules_of | paste -sd, -)"
+  if [[ -n "$mods" ]]; then cmd="$(cfg --arg r "$repo" '.repos[$r].test.affected // empty')"; cmd="${cmd//\{modules\}/$mods}"; fi
+  [[ -n "${cmd:-}" ]] || cmd="$(cfg --arg r "$repo" '.repos[$r].test.unit // empty')"
+  [[ -n "$cmd" ]] || die "no test command configured for '$repo' in workspace.json"
+  mkdir -p "$STATE_DIR"; out="$(mktemp)"; start=$SECONDS; rc=0
+  # One heavy run at a time per workspace, so parallel agents don't starve the machine.
+  flock -w 1800 "$STATE_DIR/heavy.lock" bash -c "$cmd" >"$out" 2>&1 || rc=$?
+  if [[ $rc -eq 0 ]]; then
+    echo "PASS t0 $repo ($((SECONDS-start))s): $cmd"
+    log_event test.t0 ok "$repo" "" "$cmd"
+  else
+    echo "FAIL t0 $repo ($((SECONDS-start))s): $cmd" >&2; tail -n 40 "$out" >&2
+    log_event test.t0 fail "$repo" "" "$cmd"
+  fi
+  rm -f "$out"; return $rc
+}
+
+case "${1:-}" in
+  lote)      shift; cmd_lote "$@" ;;
+  afectados) shift; cmd_afectados "$@" ;;
+  test)      shift; cmd_test "$@" ;;
+  log)       shift; cmd_log "$@" ;;
+  integrar|ship|limpiar) die "'$1' is not implemented yet" ;;
+  ""|-h|--help) sed -n '2,14p' "${BASH_SOURCE[0]}" ;;
+  *) die "unknown command: $1" ;;
+esac

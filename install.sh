@@ -10,10 +10,12 @@
 #
 # Environment:
 #   CLAUDE_HOME   target config dir (default: ~/.claude)
+#   BIN_DIR       where bin/* tools are linked (default: ~/.local/bin)
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_HOME="${CLAUDE_HOME:-$HOME/.claude}"
+BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
 BACKUP_DIR="$CLAUDE_HOME/backups/my-claude-$(date +%Y%m%d-%H%M%S)"
 
 DRY_RUN=0
@@ -67,6 +69,9 @@ items() {
   for f in "$REPO_DIR"/agents/*.md; do
     [[ -f "$f" ]] && echo "$f|$CLAUDE_HOME/agents/$(basename "$f")"
   done
+  for f in "$REPO_DIR"/bin/*; do
+    [[ -f "$f" ]] && echo "$f|$BIN_DIR/$(basename "$f")"
+  done
   for f in CLAUDE.md RTK.md; do
     [[ -f "$REPO_DIR/$f" ]] && echo "$REPO_DIR/$f|$CLAUDE_HOME/$f"
   done
@@ -82,11 +87,12 @@ fi
 say "Installing from $REPO_DIR into $CLAUDE_HOME"
 [[ $DRY_RUN -eq 1 ]] && say "(dry run: nothing will be changed)"
 
-run mkdir -p "$CLAUDE_HOME/skills" "$CLAUDE_HOME/agents"
+run mkdir -p "$CLAUDE_HOME/skills" "$CLAUDE_HOME/agents" "$BIN_DIR"
 while IFS='|' read -r src dst; do link "$src" "$dst"; done < <(items)
 
 # Make bundled scripts executable.
 run find "$REPO_DIR/skills" -path '*/scripts/*.sh' -exec chmod +x {} +
+run find "$REPO_DIR/bin" -type f -exec chmod +x {} +
 
 # Tooling check: warn only, never fail.
 say ""
@@ -95,6 +101,7 @@ for bin in git jq tmux gh node; do
   if command -v "$bin" >/dev/null 2>&1; then say "  ok       $bin"
   else say "  MISSING  $bin"; fi
 done
+case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "  NOTE     $BIN_DIR is not in PATH; add it to your shell profile" ;; esac
 command -v claude >/dev/null 2>&1 && say "  ok       claude" || say "  MISSING  claude (https://claude.com/claude-code)"
 
 say ""
