@@ -36,4 +36,4 @@ Personal defaults for every project. A repo's own CLAUDE.md wins on code convent
 
 ## Workspaces
 - If a `workspace.toml` exists in a parent directory, you are inside a multi-repo workspace: follow its CLAUDE.md and use `ms-workspace` (`context`, `status`, `batch`, `test`) instead of ad-hoc git juggling.
-- Agents commit locally only; integration and publishing are done by the user (`/ms-integrate`, `/ms-ship`).
+- Agents commit locally only; integration and publishing are done by the user (`/dynamia:integrate`, `/dynamia:ship`).

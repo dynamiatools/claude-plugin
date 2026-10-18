@@ -13,9 +13,9 @@ cd ~/IdeaProjects/my-claude
 
 Then, in a **new** Claude Code session:
 
-1. `/ms-setup`: merges the hooks, status line and permissions into your `settings.json` (preview, confirmation, backup; `--remove` undoes it).
-2. `/ms-workspace-init`: builds a workspace from scratch (asks which repos, clones them, detects stacks, writes `workspace.toml` and a workspace `CLAUDE.md`).
-3. `/ms-batch`: opens a batch of local work. From there: work, `/ms-integrate`, `/ms-ship`.
+1. `/dynamia:setup`: merges the hooks, status line and permissions into your `settings.json` (preview, confirmation, backup; `--remove` undoes it).
+2. `/dynamia:workspace-init`: builds a workspace from scratch (asks which repos, clones them, detects stacks, writes `workspace.toml` and a workspace `CLAUDE.md`).
+3. `/dynamia:batch`: opens a batch of local work. From there: work, `/dynamia:integrate`, `/dynamia:ship`.
 
 About `install.sh`:
 - It is idempotent and uses symlinks, so this repo stays the single source of truth: edit here, commit, share.
@@ -36,24 +36,24 @@ Everything uses the `ms-` prefix so nothing collides with other skills; agents a
 
 | Skill | What it does |
 |---|---|
-| `/ms-workspace-init` | Creates or updates a multi-repo workspace from scratch |
-| `/ms-batch` | Starts a batch: one isolated worktree per repo, optionally one per agent |
-| `/ms-integrate` | Merges the agents' branches, reports conflicts, runs the incremental tests |
-| `/ms-ship` | Shows what would be sent, asks, syncs, tests, pushes. User-invoked only |
-| `/ms-setup` | Installs or removes the hooks, status line and permissions in `settings.json`. User-invoked only |
-| `/ms-report` | How it is going: plan usage, where tokens went, flaky or slow tests, next step |
-| `/ms-tmux-session` | Starts a tmux session with Claude Code (and Remote Control) in a project folder |
-| `/ms-code-tunnel` | Opens a Cloudflare tunnel to the remote code viewer for the current repo |
-| `/ms-test` | Runs t0, t1 or t2 and triages failures |
-| `/ms-gate` | Scans what would be sent for secrets and leftovers (read-only) |
-| `/ms-memory` | Saves and finds the workspace's durable notes: decisions, lessons, gotchas, handoffs |
-| `/ms-recall` | Searches past sessions, notes and the log (read-only) |
-| `/ms-release` | What waits to go to qa/main and release notes (read-only) |
-| `/ms-sys` | Machine load, disk, memory, ports and leftover processes (read-only) |
-| `/ms-powers-installers` | Installs, checks and removes agent tools (uv, rtk, codebase-memory, graphify, headroom); plan first, runs only with approval |
-| `/ms-http` | API checks with assertions and local mock servers |
-| `/ms-open` | Opens a batch or an agent's worktrees in VS Code or IntelliJ (never touches Git) |
-| `/ms-git-status` | Compact, read-only status card of the current git repo |
+| `/dynamia:workspace-init` | Creates or updates a multi-repo workspace from scratch |
+| `/dynamia:batch` | Starts a batch: one isolated worktree per repo, optionally one per agent |
+| `/dynamia:integrate` | Merges the agents' branches, reports conflicts, runs the incremental tests |
+| `/dynamia:ship` | Shows what would be sent, asks, syncs, tests, pushes. User-invoked only |
+| `/dynamia:setup` | Installs or removes the hooks, status line and permissions in `settings.json`. User-invoked only |
+| `/dynamia:report` | How it is going: plan usage, where tokens went, flaky or slow tests, next step |
+| `/dynamia:tmux-session` | Starts a tmux session with Claude Code (and Remote Control) in a project folder |
+| `/dynamia:code-tunnel` | Opens a Cloudflare tunnel to the remote code viewer for the current repo |
+| `/dynamia:test` | Runs t0, t1 or t2 and triages failures |
+| `/dynamia:gate` | Scans what would be sent for secrets and leftovers (read-only) |
+| `/dynamia:memory` | Saves and finds the workspace's durable notes: decisions, lessons, gotchas, handoffs |
+| `/dynamia:recall` | Searches past sessions, notes and the log (read-only) |
+| `/dynamia:release` | What waits to go to qa/main and release notes (read-only) |
+| `/dynamia:sys` | Machine load, disk, memory, ports and leftover processes (read-only) |
+| `/dynamia:powers-installers` | Installs, checks and removes agent tools (uv, rtk, codebase-memory, graphify, headroom); plan first, runs only with approval |
+| `/dynamia:http` | API checks with assertions and local mock servers |
+| `/dynamia:open` | Opens a batch or an agent's worktrees in VS Code or IntelliJ (never touches Git) |
+| `/dynamia:git-status` | Compact, read-only status card of the current git repo |
 
 **Agents** (read-only; the first three run on Haiku so the main model does not spend tokens on reading and summarizing)
 
@@ -78,7 +78,7 @@ Everything stays local until `ship`. Agents commit locally and never push.
 | 4 | `integrate <batch> [--dry-run]` | Merges the agent branches into `int/<batch>` in dependency order and names conflicting files. `--dry-run` checks each branch against `int/<batch>` only, not against each other |
 | 5 | `test t1 <batch>` | Affected modules plus the repo's `critical` modules, for each changed repo |
 | 6 | `plan <batch>` | Shows what would be sent: per repo the target branch, push mode, commit subjects and a diffstat. Refuses while agent branches are not integrated |
-| 7 | `ship <batch> --yes [--pr]` | Merges a moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`, needs `gh`). `--pr` forces a PR for that run in every repo, whatever its `push` setting (`plan <batch> --pr` previews it); it is what "open a PR" means to `/ms-ship`. For a big change `plan`/`ship` print `RECOMMEND A PR` (defaults: 20 files, 800 lines or 10 new files, tunable in `[ship]`); it is advice only, the mode never changes by itself and the agent relays it and lets you choose. Never targets a `release` branch, never force-pushes |
+| 7 | `ship <batch> --yes [--pr]` | Merges a moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`, needs `gh`). `--pr` forces a PR for that run in every repo, whatever its `push` setting (`plan <batch> --pr` previews it); it is what "open a PR" means to `/dynamia:ship`. For a big change `plan`/`ship` print `RECOMMEND A PR` (defaults: 20 files, 800 lines or 10 new files, tunable in `[ship]`); it is advice only, the mode never changes by itself and the agent relays it and lets you choose. Never targets a `release` branch, never force-pushes |
 | 8 | `undo <batch> [--yes]` | Reverts the last ship: every `ship --yes` records what each base branch pointed to before and after. `undo` shows the plan; with `--yes` it pushes one new commit per repo that restores the previous tree (history kept, never a force-push). If someone else pushed in the meantime it refuses for that repo and prints the exact `git revert` commands; in `pr` mode it prints how to close the PR. Works after `clean` too |
 | 9 | `clean [<batch>]` | Lists batches, or removes one whose branch is in its base branch **and** whose agent branches are all integrated; otherwise it refuses and names them (`--force` discards on purpose) |
 
@@ -91,7 +91,7 @@ Names are validated, and a failed `batch new` or `agent new` rolls back what it 
 ## Guardrails
 
 - **Permissions are narrow on purpose.** `allow` covers read-only and local subcommands (`status`, `log`, `usage`, `plan`, `test`, `integrate`, `batch new`, ...). `ship`, `undo`, `clean`, `env`, `setup-hooks`, `docker clean`, `ps kill`, `notify` and `http run|bench` are in `ask`, so Claude Code always prompts before anything is pushed, deleted or run from configuration. `setup-hooks` replaces an older broad `Bash(ms-workspace:*)` rule.
-- **The guard** (`ms-workspace guard`, a PreToolUse hook) blocks `git push`, `gh pr create|merge`, `gh api` writes, `ms-workspace undo|clean|setup-hooks`, `ship --skip-gate`, `ps kill`, `docker clean` and `env --setup` **inside batch worktrees** (`ms-workspace ship` itself is allowed there: it is the sanctioned way to publish, it stays in `ask`, and the `/ms-ship` skill shows the plan and asks first), including option variants, `bash -c`, `eval`, wrappers and `cd` into a batch from elsewhere. It fails closed: inside `.batches/` it decides from the command text alone, so a broken `workspace.toml` cannot open the gate. It stops mistakes and realistic variants, not a determined adversary. Blocked attempts are logged.
+- **The guard** (`ms-workspace guard`, a PreToolUse hook) blocks `git push`, `gh pr create|merge`, `gh api` writes, `ms-workspace undo|clean|setup-hooks`, `ship --skip-gate`, `ps kill`, `docker clean` and `env --setup` **inside batch worktrees** (`ms-workspace ship` itself is allowed there: it is the sanctioned way to publish, it stays in `ask`, and the `/dynamia:ship` skill shows the plan and asks first), including option variants, `bash -c`, `eval`, wrappers and `cd` into a batch from elsewhere. It fails closed: inside `.batches/` it decides from the command text alone, so a broken `workspace.toml` cannot open the gate. It stops mistakes and realistic variants, not a determined adversary. Blocked attempts are logged.
 - **Plan usage.** Claude Code exposes the 5h session and weekly usage only to the status line, so `ms-statusline` stores a snapshot and `ms-workspace usage` reads it: percent used and left, time to reset, pace, projection and a verdict. `usage --check` exits 0 ok, 1 warn, 2 critical, 3 no data, so skills and agents confirm with you before starting; `--need <pct|auto>` checks that a planned task fits (`auto` uses the median of past completed batches, at least 3). Thresholds come from `[usage]` in `workspace.toml` (default 70/90). Projections only influence the verdict above 50 % used. Pro/Max plans only; data appears after the first reply of a session.
 - **Token-saving hooks.** `readguard` (PreToolUse on Read) tells Claude when it is about to re-read an unchanged file that is already in its context (files under 4 000 characters are ignored; a compaction or `/clear` resets the memory, because re-reading is legitimate then). `outguard` (PostToolUse on Bash) replaces a Bash output longer than 30 000 characters with its first and last 60 lines, saves the full text to a file it names, and keeps `stderr` and the output shape. Tune it with `[context] bash_output_max_chars`, `MS_OUTGUARD_MAX_CHARS`, or turn it off with `MS_OUTGUARD=off`. Neither hook can fail a session.
 - **Memory.** The log says what happened; `ms-workspace memory` keeps what was learned: one markdown note per fact (`decision`, `lesson`, `gotcha`, `handoff`) with `add`, `list`, `search`, `show`, `forget`. If an agent must stop early it leaves a handoff for the next session; `context` shows only a count and the latest handoff of each active batch, so it costs a few tokens. Handoffs disappear with their batch.
@@ -108,7 +108,7 @@ Names are validated, and a failed `batch new` or `agent new` rolls back what it 
 
 ## API checks
 
-`ms-workspace http` runs requests described in `requests/*.http.toml` (in the workspace root, or any file path) with assertions, and logs every exchange. Copy `skills/ms-workspace-init/references/requests/` as a starting point.
+`ms-workspace http` runs requests described in `requests/*.http.toml` (in the workspace root, or any file path) with assertions, and logs every exchange. Copy `skills/workspace-init/references/requests/` as a starting point.
 
 ```bash
 ms-workspace http run smoke --env local      # PASS/FAIL per request, exit 1 if anything failed
@@ -129,7 +129,7 @@ ms-workspace http list
 
 ## Local tools: mock server, Docker, system, processes
 
-**Mock server** (`ms-workspace mock`). A local stand-in for third-party APIs (payments, tax authority) that records every call, so you can test without the real service and then assert what your code sent. Definitions live in `mocks/*.mock.toml` (example: `skills/ms-workspace-init/references/mocks/`).
+**Mock server** (`ms-workspace mock`). A local stand-in for third-party APIs (payments, tax authority) that records every call, so you can test without the real service and then assert what your code sent. Definitions live in `mocks/*.mock.toml` (example: `skills/workspace-init/references/mocks/`).
 
 ```bash
 ms-workspace mock start payments        # background server on 127.0.0.1 (free port, or port = N / --port N); --restart reloads the file
@@ -182,7 +182,7 @@ Routes match top to bottom (method, `{param}` or trailing `*` path, optional `ma
 
 ## The workspace
 
-A workspace is a folder with several repos plus a `workspace.toml` (see `skills/ms-workspace-init/references/workspace.example.toml` for every key). The folder that holds the file is the workspace root; batches live in `.batches/` and state in `.ms-workspace/`, both outside every repo.
+A workspace is a folder with several repos plus a `workspace.toml` (see `skills/workspace-init/references/workspace.example.toml` for every key). The folder that holds the file is the workspace root; batches live in `.batches/` and state in `.ms-workspace/`, both outside every repo.
 
 ```toml
 name = "shop"
@@ -205,7 +205,7 @@ repo = "erp"
 
 ## Hooks
 
-`/ms-setup` (or `ms-workspace setup-hooks [--dry-run] [--remove] [--project]`) merges `settings/hooks.example.json`: idempotent, keeps every other hook, permission and setting, keeps a status line someone else configured, writes a timestamped backup. It adds `handoff --hook` (PreCompact, Stop, SessionEnd), `notify --hook` (Notification), `guard` and `readguard` (PreToolUse on Bash and Read), `outguard` (PostToolUse on Bash), `images capture` (Stop, SessionEnd), `context` (SessionStart), `readguard --reset` (SessionStart after `/clear` or a compaction), `ms-statusline` and the permission rules above. `install.sh` never edits your `settings.json` by itself.
+`/dynamia:setup` (or `ms-workspace setup-hooks [--dry-run] [--remove] [--project]`) merges `settings/hooks.example.json`: idempotent, keeps every other hook, permission and setting, keeps a status line someone else configured, writes a timestamped backup. It adds `handoff --hook` (PreCompact, Stop, SessionEnd), `notify --hook` (Notification), `guard` and `readguard` (PreToolUse on Bash and Read), `outguard` (PostToolUse on Bash), `images capture` (Stop, SessionEnd), `context` (SessionStart), `readguard --reset` (SessionStart after `/clear` or a compaction), `ms-statusline` and the permission rules above. `install.sh` never edits your `settings.json` by itself.
 
 ## Development
 

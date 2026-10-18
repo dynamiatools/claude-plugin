@@ -1,4 +1,4 @@
-"""Tests for skills/ms-powers-installers/scripts/powers.sh (standard library only).
+"""Tests for skills/powers-installers/scripts/powers.sh (standard library only).
 
 Every test uses a private HOME and fake curl/uv/graphify commands, so nothing is
 downloaded or installed.
@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "skills/ms-powers-installers/scripts/powers.sh"
+SCRIPT = Path(__file__).resolve().parent.parent / "skills/powers-installers/scripts/powers.sh"
 
 
 class TestPowers(unittest.TestCase):

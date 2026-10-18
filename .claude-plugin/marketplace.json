@@ -1,0 +1,11 @@
+{
+  "name": "dynamia",
+  "owner": { "name": "Dynamia Soluciones" },
+  "plugins": [
+    {
+      "name": "dynamia",
+      "source": ".",
+      "description": "Multi-repo workspace tools for Claude Code."
+    }
+  ]
+}

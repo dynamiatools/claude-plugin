@@ -1377,15 +1377,15 @@ class TestPackaging(unittest.TestCase):
 
     def test_example_mock_definition_is_valid(self):
         import tomllib
-        data = tomllib.loads((REPO / "skills" / "ms-workspace-init" / "references" / "mocks" / "payments.mock.toml").read_text())
+        data = tomllib.loads((REPO / "skills" / "workspace-init" / "references" / "mocks" / "payments.mock.toml").read_text())
         self.assertEqual([r["name"] for r in data["route"]][:2], ["create-payment", "declined-card"])
         sys.path.insert(0, str(REPO / "lib"))
         from ms_workspace.mock import load_def
-        self.assertEqual(len(load_def(REPO / "skills" / "ms-workspace-init" / "references" / "mocks" / "payments.mock.toml")["route"]), 5)
+        self.assertEqual(len(load_def(REPO / "skills" / "workspace-init" / "references" / "mocks" / "payments.mock.toml")["route"]), 5)
 
     def test_example_request_collection_is_valid(self):
         import tomllib
-        ref = REPO / "skills" / "ms-workspace-init" / "references" / "requests"
+        ref = REPO / "skills" / "workspace-init" / "references" / "requests"
         data = tomllib.loads((ref / "smoke.http.toml").read_text())
         self.assertEqual([r["name"] for r in data["request"]], ["health", "login", "me"])
         self.assertIn("base_url", tomllib.loads((ref / "env" / "local.toml").read_text()))
@@ -1393,7 +1393,7 @@ class TestPackaging(unittest.TestCase):
 
     def test_example_workspace_config_parses(self):
         import tomllib
-        cfg = tomllib.loads((REPO / "skills" / "ms-workspace-init" / "references" / "workspace.example.toml").read_text())
+        cfg = tomllib.loads((REPO / "skills" / "workspace-init" / "references" / "workspace.example.toml").read_text())
         self.assertIn("repos", cfg)
 
     def test_installer_links_everything_and_is_idempotent(self):
@@ -1402,7 +1402,7 @@ class TestPackaging(unittest.TestCase):
             first = run([str(REPO / "install.sh")], env=env)
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertTrue((Path(tmp) / "b" / "ms-workspace").is_symlink())
-            self.assertTrue((Path(tmp) / "c" / "skills" / "ms-ship").is_symlink())
+            self.assertTrue((Path(tmp) / "c" / "skills" / "ship").is_symlink())
             self.assertTrue((Path(tmp) / "c" / "agents" / "ms-agent-boss.md").is_symlink())
             self.assertTrue((Path(tmp) / "c" / "CLAUDE.md").is_symlink())
             second = run([str(REPO / "install.sh")], env=env)
@@ -1862,7 +1862,7 @@ class TestRepoHygiene(unittest.TestCase):
         self.assertIn("__pycache__/", (REPO / ".gitignore").read_text())
 
     def test_no_stale_references_in_skills(self):
-        init = (REPO / "skills" / "ms-workspace-init" / "SKILL.md").read_text()
+        init = (REPO / "skills" / "workspace-init" / "SKILL.md").read_text()
         self.assertNotIn(".claude/worktrees", init)
         self.assertNotIn("`root`", init.replace("Do not write a `root` key", ""))
         for path in (REPO / "skills").glob("*/SKILL.md"):

@@ -36,7 +36,7 @@ def render(ws: Workspace) -> str:
     out += ["", "## Rules for agents",
             "- Work only inside the repo/module assigned to your task, inside a batch worktree (`.batches/<batch>/...`).",
             "- Commit locally. Never `git push`, `gh pr create|merge` or `ms-workspace clean|undo` by hand: a hook blocks them. "
-            "Publishing goes through `/ms-ship` (plan, confirmation, `ms-workspace ship`), and only when the user asks: "
+            "Publishing goes through `/dynamia:ship` (plan, confirmation, `ms-workspace ship`), and only when the user asks: "
             "\"open a PR\" means `ship --pr`; \"ship\" or \"publish\" uses each repo's configured push mode. If the plan says RECOMMEND A PR, tell the user and let them choose.",
             "- After changes run `ms-workspace test t0` (tests only what changed). Fix failures before saying you are done.",
             "- Do not create branches or worktrees by hand; use `ms-workspace batch new` / `agent new`.",
@@ -52,7 +52,7 @@ def render(ws: Workspace) -> str:
             "`ms-workspace memory add --type handoff --batch <batch> \"state, next step, files touched\"`.",
             "", "## Batch flow (human-driven)",
             "`batch new` -> `agent new` -> `test t0` -> `integrate` -> `test t1` -> `ship --yes` (or `--pr`) -> `clean`.",
-            "Skills: /ms-batch, /ms-integrate, /ms-ship.",
+            "Skills: /dynamia:batch, /dynamia:integrate, /dynamia:ship.",
             "", "## Saving tokens",
             "- One agent by default; parallel agents only for independent repos or modules.",
             "- Read `ms-workspace context`, `status` and `log` before exploring the repos.",
