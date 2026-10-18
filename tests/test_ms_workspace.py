@@ -1236,6 +1236,58 @@ class TestSetupHooks(Base):
         self.assertIn("Bash(ms-workspace status:*)", data["permissions"]["allow"])
         again = self.setup("--plugin-root", "/opt/dynamia")
         self.assertIn("Already up to date", again.stdout)
+        self.assertOk(self.setup("--remove"))
+        self.assertNotIn("statusLine", self.load(), "--remove also takes out the plugin-path status line")
+
+    def global_setup(self, *args):
+        self.bin = self.ws.tmp / "local-bin"
+        self.env = {**self.env, "BIN_DIR": str(self.bin)}
+        return self.setup("--global", "--plugin-root", str(REPO), *args)
+
+    def test_global_adds_a_marked_block_and_links_the_tools(self):
+        md = self.home / "CLAUDE.md"
+        self.home.mkdir(parents=True)
+        md.write_text("# Mine\nkeep me\n")
+        r = self.global_setup()
+        self.assertOk(r)
+        text = md.read_text()
+        self.assertTrue(text.startswith("# Mine\nkeep me\n"))
+        self.assertIn("<!-- dynamia:begin", text)
+        self.assertIn((REPO / "CLAUDE.md").read_text().strip(), text)
+        self.assertEqual((self.bin / "ms-workspace").resolve(), (REPO / "bin" / "ms-workspace").resolve())
+        self.assertTrue(list(self.home.glob("CLAUDE.md.bak-*")), "the old file is backed up")
+        again = self.global_setup()
+        self.assertEqual(md.read_text(), text, "idempotent")
+        self.assertIn("present  dynamia block", again.stdout)
+
+    def test_global_never_writes_through_a_link_to_the_repo_file(self):
+        self.home.mkdir(parents=True)
+        original = (REPO / "CLAUDE.md").read_text()
+        (self.home / "CLAUDE.md").symlink_to(REPO / "CLAUDE.md")
+        self.assertOk(self.global_setup())
+        self.assertFalse((self.home / "CLAUDE.md").is_symlink())
+        self.assertEqual((REPO / "CLAUDE.md").read_text(), original)
+        self.assertIn("<!-- dynamia:begin", (self.home / "CLAUDE.md").read_text())
+
+    def test_global_dry_run_and_remove(self):
+        self.home.mkdir(parents=True)
+        (self.home / "CLAUDE.md").write_text("# Mine\n")
+        self.assertIn("added", self.global_setup("--dry-run").stdout)
+        self.assertEqual((self.home / "CLAUDE.md").read_text(), "# Mine\n")
+        self.assertFalse((self.bin / "ms-workspace").exists())
+        self.assertOk(self.global_setup())
+        self.assertOk(self.global_setup("--remove"))
+        self.assertEqual((self.home / "CLAUDE.md").read_text(), "# Mine\n")
+        self.assertFalse((self.bin / "ms-workspace").exists())
+
+    def test_global_keeps_a_real_file_in_the_bin_dir(self):
+        self.home.mkdir(parents=True)
+        self.bin = self.ws.tmp / "local-bin"
+        self.bin.mkdir()
+        (self.bin / "ms-workspace").write_text("#!/bin/sh\n")
+        r = self.global_setup()
+        self.assertIn("kept", r.stdout)
+        self.assertEqual((self.bin / "ms-workspace").read_text(), "#!/bin/sh\n")
 
     def test_fresh_install_adds_everything_once(self):
         self.assertOk(self.setup())

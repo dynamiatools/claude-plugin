@@ -13,20 +13,24 @@ In Claude Code:
 
 `dynamia@dynamia` is `<plugin>@<marketplace>`: this repo is both the plugin and its own one-plugin marketplace, and both are named `dynamia`. A private repo works with the git credentials the machine already has (SSH key without passphrase, or `gh auth login` then `gh auth setup-git`). Third-party marketplaces do not auto-update by default: turn it on in `/plugin` > Marketplaces, or run `/plugin update dynamia`.
 
-The plugin provides the skills (`/dynamia:<skill>`), the agents (`dynamia:<agent>`), the hooks and `ms-workspace` on the Bash tool's PATH. Claude Code does not let a plugin set the status line, permissions or `~/.claude/CLAUDE.md`, so finish once:
+The plugin provides the skills (`/dynamia:<skill>`), the agents (`dynamia:<agent>`), the hooks and `ms-workspace` on the Bash tool's PATH. Claude Code does not let a plugin set the status line, permissions or `~/.claude/CLAUDE.md`, or put tools in your shell PATH, so one skill finishes the job. In a **new** Claude Code session run:
 
-1. Clone the repo, then link the tools and the global instructions (needs `python3 >= 3.11`, `git`, `jq`):
-   ```bash
-   git clone <repo-url> ~/IdeaProjects/my-claude && cd ~/IdeaProjects/my-claude
-   ./install.sh --dry-run     # optional: preview
-   ./install.sh               # links bin/ (ms-workspace, ms-statusline) and CLAUDE.md; drops old skill/agent links
-   ```
-2. In a **new** Claude Code session run `/dynamia:setup`: it adds the status line and the permission rules to your `settings.json` (preview, confirmation, backup; `--remove` undoes it). Run it again after every `/plugin update`, because the status line path holds the plugin version.
-3. Check everything with `ms-workspace doctor`.
+```
+/dynamia:setup
+```
 
-To remove: `/plugin uninstall dynamia@dynamia`, `/dynamia:setup --remove`, `./install.sh --uninstall`.
+It shows a preview, asks, makes a backup and then:
+- adds the status line (`ms-statusline`) and the permission rules to `~/.claude/settings.json`, and removes an older copy of the hooks so they do not run twice;
+- adds the repo's global instructions to `~/.claude/CLAUDE.md` as a block between `dynamia:begin/end` markers (your own content in that file stays; a link to the repo file is replaced, never written through);
+- links `ms-workspace` and `ms-statusline` into `~/.local/bin` (add it to your `PATH` if the report says so).
 
-About `install.sh`:
+Run it again after every `/plugin update`: those three point into the plugin folder, which holds the version. Check with `ms-workspace doctor`. Nothing needs a clone of the repo or `install.sh`.
+
+To remove: `/dynamia:setup --remove` (undoes the three), then `/plugin uninstall dynamia@dynamia`.
+
+`/plugin` does not run inside a Remote Control session; from a terminal use `claude plugin marketplace add <owner>/<repo>` and `claude plugin install dynamia@dynamia`.
+
+`install.sh` (needs a clone) does the same linking without the skill, for use without the plugin or on a machine where you prefer a script:
 - It is idempotent and uses symlinks, so this repo stays the single source of truth.
 - Files that already exist are moved to `~/.claude/backups/my-claude-<timestamp>/`, never deleted. Your own `~/.claude/CLAUDE.md` is replaced by the one in this repo (backed up first).
 - `--legacy` also links skills and agents into `~/.claude`, for use without the plugin (the skills then have no `dynamia:` prefix and the hooks come from `/dynamia:setup` without `--plugin-root`).
