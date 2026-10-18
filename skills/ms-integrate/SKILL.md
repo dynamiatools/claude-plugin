@@ -22,7 +22,7 @@ Joins agent work into `int/<batch>` and validates it. Local only: nothing is pus
 4. **Validate**: `ms-workspace test t1 <batch>`.
    - On failure, delegate the first analysis to the `ms-agent-test-triage` agent (cheap model) with the printed output, then fix only what it points to.
 
-5. **Report** in at most 6 lines: merged branches, conflicts resolved, t1 result. If everything passed, suggest `/ms-ship <batch>`.
+5. **Report** in at most 6 lines: merged branches, conflicts resolved, t1 result quoted from the command output (never "should pass"), and anything skipped or not verified. If everything passed, suggest `/ms-ship <batch>`.
 
 ## Notes
 - Do not run `ms-workspace ship` or `clean` here.

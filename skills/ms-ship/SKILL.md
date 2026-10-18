@@ -33,7 +33,7 @@ It works from the workspace root or from inside the batch worktree. In a batch w
    - Base moved: it merges `origin/<base>` into the batch and re-runs the tests; this is expected.
    - Conflict, failed t1/e2e, or a rejected push: nothing further is pushed. Report the exact error and stop; do not retry blindly.
 
-5. **After success**: ask whether to run `ms-workspace clean <batch>` (removes worktrees and local branches), and report the pushed repos in one line each.
+5. **After success**: ask whether to run `ms-workspace clean <batch>` (removes worktrees and local branches), and report the pushed repos in one line each, with the t1/e2e result taken from the ship output and anything skipped (`--skip-e2e`, repos without tests).
 
 ## Notes
 - Promotion from the base branch to QA/production is a separate, human decision outside this skill.

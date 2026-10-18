@@ -16,6 +16,14 @@ Personal defaults for every project. A repo's own CLAUDE.md wins on code convent
 - When the request is clear, act; when it is genuinely ambiguous or irreversible, ask one short question.
 - Give a recommendation, not a survey of options. Keep answers short and in plain language.
 - Report outcomes faithfully: say when tests fail, when something was skipped, and what was not verified. Do not claim success you did not check.
+- Before saying work is done, run the check that proves it (tests, build, the command itself) and cite the command and its result. No evidence, no "done".
+- End each report of finished work with one line: what was skipped or not verified, and any risk left.
+
+## Writing code
+- Read the code the change touches and trace the real flow before writing. Be lazy about the solution, never about reading.
+- Stop at the first rung that holds: does it need to exist? does the codebase already have it? the standard library? a native platform feature? an installed dependency? one line? Only then write the minimum that works.
+- Never cut validation at trust boundaries, data-loss handling, security or accessibility. Add a small test when the code has a branch, loop, parser, money or security concern.
+- Mark a deliberate shortcut with a `shortcut:` comment saying when to revisit it.
 
 ## Saving tokens and finishing work
 - Read the smallest slice that answers the question; delegate wide searches and summaries to the cheap `ms-agent-*` agents when available.
