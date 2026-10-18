@@ -1535,7 +1535,8 @@ class TestGuardHardening(Base):
                     "FOO=1 git push", "sudo git push", "bash -c 'git push origin x'", 'eval "git push"', "git --no-pager push",
                     "echo hi | git push", "ls; git push", "/usr/bin/git push", "git -c user.name=x push", "gh pr merge 3",
                     "gh api repos/o/r/issues -f title=x", "gh api -X POST repos/o/r/issues", "gh release create v1",
-                    "ms-workspace setup-hooks", "ms-workspace env b1 --setup", "ms-workspace undo b1 --yes"):
+                    "ms-workspace setup-hooks", "ms-workspace env b1 --setup", "ms-workspace undo b1 --yes",
+                    "rtk git push", "rtk proxy git push origin x", "rtk gh pr create"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.guard(cmd, d / "lib").returncode, 2, cmd)
 
@@ -1549,7 +1550,7 @@ class TestGuardHardening(Base):
         d = self.ws.batch("b1")
         for cmd in ("git status", "git log --oneline", "git pull", "git fetch", "git commit -m 'fix push handling'", "git diff | head",
                     "gh pr view 3", "gh api repos/o/r/pulls", "gh issue view 1", "echo git push", "grep -r push src",
-                    "git checkout -b feature/push-fix", "ms-workspace test t0", "ms-workspace env b1", "unterminated 'quote"):
+                    "git checkout -b feature/push-fix", "rtk git status", "rtk gh pr view 3", "ms-workspace test t0", "ms-workspace env b1", "unterminated 'quote"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.guard(cmd, d / "lib").returncode, 0, cmd)
 

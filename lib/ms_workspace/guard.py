@@ -13,7 +13,7 @@ import sys
 from .core import find_workspace_root
 
 SEPARATORS = {"&&", "||", ";", "|", "&", "\n", "(", ")", "{", "}"}
-WRAPPERS = {"sudo", "command", "exec", "nohup", "time", "env", "xargs", "nice", "stdbuf", "timeout"}
+WRAPPERS = {"sudo", "command", "exec", "nohup", "time", "env", "xargs", "nice", "stdbuf", "timeout", "rtk", "proxy"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix", "--config-env"}
 PUBLISH_GH = {("pr", "create"), ("pr", "merge"), ("pr", "ready"), ("pr", "close"), ("release", "create"),
