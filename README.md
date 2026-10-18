@@ -50,6 +50,7 @@ Everything uses the `ms-` prefix so nothing collides with other skills; agents a
 | `/ms-recall` | Searches past sessions, notes and the log (read-only) |
 | `/ms-release` | What waits to go to qa/main and release notes (read-only) |
 | `/ms-sys` | Machine load, disk, memory, ports and leftover processes (read-only) |
+| `/ms-powers-installers` | Installs, checks and removes agent tools (uv, rtk, codebase-memory, graphify, headroom); plan first, runs only with approval |
 | `/ms-http` | API checks with assertions and local mock servers |
 | `/ms-open` | Opens a batch or an agent's worktrees in VS Code or IntelliJ (never touches Git) |
 | `/ms-git-status` | Compact, read-only status card of the current git repo |
