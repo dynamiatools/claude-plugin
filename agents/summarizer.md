@@ -1,5 +1,5 @@
 ---
-name: ms-agent-summarizer
+name: summarizer
 description: Cheap summaries for a workspace. Condenses diffs, git history and `ms-workspace log`, and drafts commit messages or PR descriptions that follow each repo's own convention. Use for anything that is read-a-lot, say-a-little.
 model: haiku
 disallowedTools: Write, Edit, NotebookEdit

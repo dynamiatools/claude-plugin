@@ -1,5 +1,5 @@
 ---
-name: ms-agent-scout
+name: scout
 description: Cheap, read-only code finder. Locates where something lives (symbols, callers, files, modules) across the repos of a workspace and returns only paths and a one-line reason each. Use instead of reading many files in the main thread.
 model: haiku
 disallowedTools: Write, Edit, NotebookEdit

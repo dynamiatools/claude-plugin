@@ -595,7 +595,7 @@ class TestClaudeMd(Base):
         self.assertLess(text.index("- lib:"), text.index("- app:"))
         self.assertIn("depends on lib", text)
         self.assertIn("ms-workspace usage --check", text)
-        self.assertIn("ms-agent-scout", text)
+        self.assertIn("dynamia:scout", text)
         self.assertEqual(text.count("ms-workspace:begin"), 1)
 
     def test_regeneration_keeps_user_notes_and_updates_block(self):
@@ -1355,12 +1355,12 @@ class TestPackaging(unittest.TestCase):
                         self.assertNotIn(": ", value, f"{key} has an unquoted ': ' (invalid YAML)")
                         self.assertNotIn(" #", value, f"{key} has an unquoted ' #' (YAML comment)")
 
-    def test_agents_have_valid_frontmatter_and_the_prefix(self):
+    def test_agents_have_valid_frontmatter_and_known_names(self):
         for path in sorted((REPO / "agents").glob("*.md")):
             with self.subTest(agent=path.stem):
                 f = self.frontmatter(path)
                 self.assertEqual(f.get("name"), path.stem)
-                self.assertTrue(path.stem.startswith("ms-agent-"))
+                self.assertTrue(path.stem in {"boss", "scout", "summarizer", "test-triage"})
                 self.assertIn(f.get("model"), ("haiku", "sonnet", "opus"))
                 self.assertTrue(f.get("description"))
                 for key, value in f.items():
@@ -1420,7 +1420,7 @@ class TestPackaging(unittest.TestCase):
             legacy = run([str(REPO / "install.sh"), "--legacy"], env=env)
             self.assertEqual(legacy.returncode, 0, legacy.stderr)
             self.assertTrue((Path(tmp) / "c" / "skills" / "ship").is_symlink())
-            self.assertTrue((Path(tmp) / "c" / "agents" / "ms-agent-boss.md").is_symlink())
+            self.assertTrue((Path(tmp) / "c" / "agents" / "boss.md").is_symlink())
             self.assertTrue((Path(tmp) / "c" / "CLAUDE.md").is_symlink())
             second = run([str(REPO / "install.sh")], env=env)
             self.assertNotIn("backup", second.stdout)

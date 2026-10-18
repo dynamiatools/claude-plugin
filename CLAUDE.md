@@ -26,7 +26,7 @@ Personal defaults for every project. A repo's own CLAUDE.md wins on code convent
 - Mark a deliberate shortcut with a `shortcut:` comment saying when to revisit it.
 
 ## Saving tokens and finishing work
-- Read the smallest slice that answers the question; delegate wide searches and summaries to the cheap `ms-agent-*` agents when available.
+- Read the smallest slice that answers the question; delegate wide searches and summaries to the cheap `dynamia:*` agents when available.
 - Before a long task or session, run `ms-workspace usage --check` if it exists. On a warning, tell the user the numbers and confirm; do not start work you cannot finish in the remaining window.
 - Prefer small steps that end in a working, committed state over large changes left half done.
 

@@ -14,6 +14,6 @@ argument-hint: "t0 | t1 [batch] | t2 [batch]"
 
 ## Steps
 1. Default to `t0` inside a worktree, `t1` when the user names a batch, `t2` only when asked.
-2. Show the PASS/FAIL line. On failure hand the printed output to the `ms-agent-test-triage` agent first and fix only what it points to; when JUnit reports exist the tool already prints a summary.
+2. Show the PASS/FAIL line. On failure hand the printed output to the `dynamia:test-triage` agent first and fix only what it points to; when JUnit reports exist the tool already prints a summary.
 3. Say plainly when a result was cached ("same code and command already passed").
 4. Repo `env = [...]` variables from `workspace.toml` are applied by the tool; do not export them by hand.

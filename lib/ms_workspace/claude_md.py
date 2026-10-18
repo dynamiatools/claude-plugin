@@ -60,8 +60,8 @@ def render(ws: Workspace) -> str:
             "(path plus the text sent with them), so you can look at an earlier screenshot with Read instead of asking for it again.",
             "- Hooks shorten huge Bash output (the full text is saved to a file they name) and warn when you re-read an unchanged file: "
             "narrow commands (grep, head, the failing test only) and reuse what is already in context.",
-            "- Delegate code search to `ms-agent-scout`, failing-test analysis to `ms-agent-test-triage`, "
-            "summaries and commit drafts to `ms-agent-summarizer` (all Haiku).",
+            "- Delegate code search to `dynamia:scout`, failing-test analysis to `dynamia:test-triage`, "
+            "summaries and commit drafts to `dynamia:summarizer` (all Haiku).",
             "", "## Tool preference"]
     discovery = ws.get("tools", "discovery", default=["idea", "codebase-memory", "grep"])
     out += [f"{i}. {_tool_label(t)}" for i, t in enumerate(discovery, 1)]

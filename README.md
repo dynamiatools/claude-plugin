@@ -42,7 +42,7 @@ install.sh   bin/ (ms-workspace, ms-statusline)   lib/ms_workspace/ (the tool)
 skills/      agents/      CLAUDE.md (global instructions)   settings/ (hooks example)   tests/
 ```
 
-Everything uses the `ms-` prefix so nothing collides with other skills; agents are `ms-agent-*` so they stand out in the `/` list.
+The plugin name is the prefix, so nothing collides with other skills or agents: `/dynamia:<skill>` and `dynamia:<agent>`. The command-line tools keep the `ms-` prefix (`ms-workspace`, `ms-statusline`).
 
 **Skills**
 
@@ -71,10 +71,10 @@ Everything uses the `ms-` prefix so nothing collides with other skills; agents a
 
 | Agent | Use |
 |---|---|
-| `ms-agent-scout` | Finds where code lives: paths and one line each |
-| `ms-agent-test-triage` | Classifies a failing run (code, test, flaky, environment, config, build) and points to the file |
-| `ms-agent-summarizer` | Condenses diffs, history and logs; drafts commit messages in each repo's style |
-| `ms-agent-boss` | Opus architecture review of a batch, diff or design; returns a verdict plus blocking and should-fix findings |
+| `dynamia:scout` | Finds where code lives: paths and one line each |
+| `dynamia:test-triage` | Classifies a failing run (code, test, flaky, environment, config, build) and points to the file |
+| `dynamia:summarizer` | Condenses diffs, history and logs; drafts commit messages in each repo's style |
+| `dynamia:boss` | Opus architecture review of a batch, diff or design; returns a verdict plus blocking and should-fix findings |
 
 **Tools**: `ms-workspace` (Python 3.11+, standard library only) does the git, test and bookkeeping work so the model does not; `ms-statusline` (bash + jq) shows the model, the git branch with uncommitted files and ahead/behind, context, cost and plan usage in the footer, in color (`NO_COLOR` turns it off) and saves the plan-usage snapshot.
 
@@ -231,7 +231,7 @@ python3 -m unittest tests.test_ms_workspace.TestShip -v
 
 `MS_WORKSPACE_BIN` runs the suite against another build of the tool.
 
-**Add a skill**: create `skills/<name>/SKILL.md` with `name` and `description` frontmatter (avoid an unquoted `: ` in values, the suite checks it), write clear trigger conditions in `description`, run `./install.sh`, test it in a session, commit. Agents are one file each in `agents/` and must be named `ms-agent-*`.
+**Add a skill**: create `skills/<name>/SKILL.md` with `name` and `description` frontmatter (avoid an unquoted `: ` in values, the suite checks it), write clear trigger conditions in `description`, run `./install.sh`, test it in a session, commit. Agents are one file each in `agents/` and must be named `dynamia:*`.
 
 ## Roadmap
 

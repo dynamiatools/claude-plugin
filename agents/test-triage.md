@@ -1,5 +1,5 @@
 ---
-name: ms-agent-test-triage
+name: test-triage
 description: Cheap first-pass analysis of a failing test run. Classifies the failure (code bug, flaky, environment, config, build) and points to the most likely file and next step. Use after `ms-workspace test` fails, before spending a bigger model on it.
 model: haiku
 disallowedTools: Write, Edit, NotebookEdit
