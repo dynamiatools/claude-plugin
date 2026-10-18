@@ -1226,6 +1226,17 @@ class TestSetupHooks(Base):
         self.assertIn("added", r.stdout)
         self.assertFalse(self.settings.exists())
 
+    def test_plugin_root_drops_our_hooks_and_points_the_status_line_at_the_plugin(self):
+        self.assertOk(self.setup())
+        r = self.setup("--plugin-root", "/opt/dynamia/")
+        self.assertOk(r)
+        data = self.load()
+        self.assertNotIn("hooks", data)
+        self.assertEqual(data["statusLine"]["command"], '"/opt/dynamia/bin/ms-statusline"')
+        self.assertIn("Bash(ms-workspace status:*)", data["permissions"]["allow"])
+        again = self.setup("--plugin-root", "/opt/dynamia")
+        self.assertIn("Already up to date", again.stdout)
+
     def test_fresh_install_adds_everything_once(self):
         self.assertOk(self.setup())
         data = self.load()
@@ -1399,9 +1410,15 @@ class TestPackaging(unittest.TestCase):
     def test_installer_links_everything_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {**os.environ, "CLAUDE_HOME": f"{tmp}/c", "BIN_DIR": f"{tmp}/b"}
+            (Path(tmp) / "c" / "skills").mkdir(parents=True)
+            (Path(tmp) / "c" / "skills" / "ms-ship").symlink_to(REPO / "skills" / "ms-ship")  # dangling, from an older install
             first = run([str(REPO / "install.sh")], env=env)
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertTrue((Path(tmp) / "b" / "ms-workspace").is_symlink())
+            self.assertFalse((Path(tmp) / "c" / "skills" / "ms-ship").is_symlink(), "old skill links are dropped")
+            self.assertFalse((Path(tmp) / "c" / "skills" / "ship").exists(), "the plugin provides skills")
+            legacy = run([str(REPO / "install.sh"), "--legacy"], env=env)
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
             self.assertTrue((Path(tmp) / "c" / "skills" / "ship").is_symlink())
             self.assertTrue((Path(tmp) / "c" / "agents" / "ms-agent-boss.md").is_symlink())
             self.assertTrue((Path(tmp) / "c" / "CLAUDE.md").is_symlink())

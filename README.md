@@ -4,12 +4,22 @@ My portable [Claude Code](https://claude.com/claude-code) setup: skills, subagen
 
 ## Quick start
 
+Install it as a Claude Code plugin named `dynamia` (skills, agents and hooks; the skills are called `/dynamia:<skill>`):
+
+```
+/plugin marketplace add ~/IdeaProjects/my-claude      # or <owner>/<repo> for a git remote
+/plugin install dynamia@dynamia
+```
+
+A plugin cannot set the status line, permissions or `~/.claude/CLAUDE.md`, so link the tool and the global instructions once:
+
 ```bash
-git clone <repo-url> ~/IdeaProjects/my-claude
 cd ~/IdeaProjects/my-claude
 ./install.sh --dry-run     # optional: preview
-./install.sh               # link skills, agents, CLAUDE.md and the tools
+./install.sh               # link bin/ (ms-workspace, ms-statusline) and CLAUDE.md; drops old skill/agent links
 ```
+
+Without the plugin, `./install.sh --legacy` links the skills and agents into `~/.claude` as before (then the skills have no `dynamia:` prefix).
 
 Then, in a **new** Claude Code session:
 
@@ -18,6 +28,7 @@ Then, in a **new** Claude Code session:
 3. `/dynamia:batch`: opens a batch of local work. From there: work, `/dynamia:integrate`, `/dynamia:ship`.
 
 About `install.sh`:
+- With the plugin it links only `bin/` and `CLAUDE.md`; skills, agents and hooks come from the plugin (`hooks/hooks.json`).
 - It is idempotent and uses symlinks, so this repo stays the single source of truth: edit here, commit, share.
 - Files that already exist are moved to `~/.claude/backups/my-claude-<timestamp>/`, never deleted. Your own `~/.claude/CLAUDE.md` is replaced by the one in this repo (backed up first); an `@RTK.md` import in it is no longer loaded, the rtk hook keeps working.
 - `--uninstall` removes only links that point to this repo. `CLAUDE_HOME` and `BIN_DIR` redirect the targets (defaults `~/.claude` and `~/.local/bin`; make sure `BIN_DIR` is in your `PATH`).
@@ -27,6 +38,7 @@ About `install.sh`:
 
 ```
 install.sh   bin/ (ms-workspace, ms-statusline)   lib/ms_workspace/ (the tool)
+.claude-plugin/ (plugin + marketplace)   hooks/hooks.json
 skills/      agents/      CLAUDE.md (global instructions)   settings/ (hooks example)   tests/
 ```
 

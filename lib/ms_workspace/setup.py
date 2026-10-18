@@ -47,6 +47,8 @@ def merge(settings: dict, src: dict) -> list[str]:
                 else:
                     existing["hooks"].append(copy.deepcopy(h))
                     report.append(f"added    {label}: {h['command']}")
+    if not hooks:
+        settings.pop("hooks", None)
     if src.get("statusLine"):
         cur = settings.get("statusLine")
         if not cur:
@@ -72,6 +74,33 @@ def merge(settings: dict, src: dict) -> list[str]:
                 report.append(f"added    {kind} {rule}")
         if not rules:
             del perms[kind]
+    return report
+
+
+def use_plugin_root(settings: dict, src: dict, root: str) -> list[str]:
+    """Plugin mode: the plugin ships the hooks itself, so drop our copies from settings.json and
+    point the status line at the plugin's script (a plugin's bin/ is not on the status line's PATH).
+    shortcut: the path holds the plugin version, so /dynamia:setup must run again after an update."""
+    report, cmds = [], our_commands(src)
+    for event in list(settings.get("hooks", {})):
+        for g in settings["hooks"][event]:
+            report += [f"removed  {event}: {h['command']} (the plugin provides it)" for h in g.get("hooks", []) if h.get("command") in cmds]
+            g["hooks"] = [h for h in g.get("hooks", []) if h.get("command") not in cmds]
+        settings["hooks"][event] = [g for g in settings["hooks"][event] if g.get("hooks")]
+        if not settings["hooks"][event]:
+            del settings["hooks"][event]
+    if not settings.get("hooks"):
+        settings.pop("hooks", None)
+    src["hooks"], src["statusLine"] = {}, None  # merge() then only adds the permissions
+    line = {"type": "command", "command": f'"{root}/bin/ms-statusline"'}
+    cur = (settings.get("statusLine") or {}).get("command", "")
+    if cur == line["command"]:
+        report.append(f"present  statusLine: {cur}")
+    elif not cur or cur.strip('"').endswith("ms-statusline"):
+        settings["statusLine"] = line
+        report.append(f"{'updated' if cur else 'added  '}  statusLine: {line['command']}")
+    else:
+        report.append(f"kept     statusLine already set to '{cur}' (not overwritten; usage tracking needs ms-statusline)")
     return report
 
 
@@ -127,12 +156,18 @@ def cmd_setup_hooks(args: list[str]) -> int:
         except ValueError as e:
             die(f"{target} is not valid JSON ({e}); fix it first, nothing was changed")
     before = json.dumps(settings, sort_keys=True)
-    report = remove(settings, src) if undo else merge(settings, src)
+    report = []
+    if "--plugin-root" in args and not undo:
+        i = args.index("--plugin-root")
+        if i + 1 >= len(args):
+            die("--plugin-root needs the plugin folder")
+        report = use_plugin_root(settings, src, args[i + 1].rstrip("/"))
+    report += remove(settings, src) if undo else merge(settings, src)
     changed = json.dumps(settings, sort_keys=True) != before
     print(f"{'(dry run) ' if dry else ''}{'Removing from' if undo else 'Merging into'} {target}")
     for line in report or ["nothing to do"]:
         print("  " + line)
-    if not undo and shutil.which("ms-workspace") is None:
+    if not undo and "--plugin-root" not in args and shutil.which("ms-workspace") is None:
         print("  warning: ms-workspace is not in PATH, so the hooks would fail; run ./install.sh first")
     if changed and not dry:
         target.parent.mkdir(parents=True, exist_ok=True)

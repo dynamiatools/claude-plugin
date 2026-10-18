@@ -173,10 +173,13 @@ def cmd_doctor(ws: Workspace | None) -> int:
     from .setup import installed_commands, our_commands, settings_path, SOURCE
     try:
         sp = settings_path()
-        have = installed_commands(json.loads(sp.read_text())) if sp.exists() else set()
+        cfg = json.loads(sp.read_text()) if sp.exists() else {}
+        have = installed_commands(cfg)
         wanted = our_commands(json.loads(SOURCE.read_text()))
         missing = sorted(wanted - have)
-        if missing:
+        if any(k.startswith("dynamia@") and v for k, v in (cfg.get("enabledPlugins") or {}).items()):
+            ok("ms-workspace hooks come from the dynamia plugin")
+        elif missing:
             warn("not installed in settings.json: " + ", ".join(missing) + " (run /dynamia:setup)")
         else:
             ok("ms-workspace hooks are installed in settings.json")
