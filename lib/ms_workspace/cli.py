@@ -21,7 +21,7 @@ Usage:
   ms-workspace test t1 [batch]               affected + critical modules for every changed repo of the batch
   ms-workspace test t2 [batch]               end-to-end command from [e2e] in workspace.toml
   ms-workspace integrate <batch> [--dry-run] merge agent branches into int/<batch> (conflicts detected first)
-  ms-workspace ship <batch> [--yes] [--skip-e2e]   sync with base, test, push (plan only without --yes)
+  ms-workspace ship <batch> [--yes] [--pr] [--skip-e2e]   sync with base, test, push (plan only without --yes); --pr opens a PR instead of pushing to base
   ms-workspace plan <batch>                  same as `ship` without --yes: shows what would be sent, changes nothing
   ms-workspace undo <batch> [--yes]          revert the last ship: adds a commit restoring the old tree (never force-pushes)
   ms-workspace clean [<batch>] [--force]     list batches, or remove one that is already merged
@@ -145,7 +145,7 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     table = {
         "batch": batches.cmd_batch, "agent": batches.cmd_agent, "affected": batches.cmd_affected,
         "env": batches.cmd_env, "integrate": batches.cmd_integrate, "ship": batches.cmd_ship,
-        "clean": batches.cmd_clean, "undo": batches.cmd_undo, "plan": lambda ws, a: batches.cmd_ship(ws, a[:1]), "test": runner.cmd_test, "log": overview.cmd_log,
+        "clean": batches.cmd_clean, "undo": batches.cmd_undo, "plan": lambda ws, a: batches.cmd_ship(ws, a[:1] + [x for x in a[1:] if x == "--pr"]), "test": runner.cmd_test, "log": overview.cmd_log,
         "status": overview.cmd_status, "claude-md": claude_md.cmd_claude_md,
         "memory": memory.cmd_memory, "release": lambda ws, a: __import__("ms_workspace.release", fromlist=["x"]).cmd_release(ws, a), "recall": lambda ws, a: __import__("ms_workspace.recall", fromlist=["x"]).cmd_recall(ws, a), "insights": insights.cmd_insights, "tokens": tokens.cmd_tokens,
     }

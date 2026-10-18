@@ -278,16 +278,42 @@ def cmd_ship(ws: Workspace, args: list[str]) -> int:
     return code
 
 
+def push_mode(ws: Workspace, repo: str, force_pr: bool = False) -> str:
+    """How a repo is published: its configured `push` ("direct" by default), or "pr" when this run asks for a PR."""
+    return "pr" if force_pr else (ws.repo_cfg(repo).get("push") or "direct")
+
+
+PR_HINT_DEFAULTS = {"files": 20, "lines": 800, "new_files": 10}
+
+
+def pr_recommendation(ws: Workspace, wt: Path, ref: str) -> str:
+    """Why a big change is better reviewed as a PR ('' when it is small). Only advice: ship never switches mode by itself.
+    Limits come from [ship] recommend_pr_files / recommend_pr_lines / recommend_pr_new_files (0 turns one off)."""
+    limits = {k: int(ws.get("ship", f"recommend_pr_{k}", default=v)) for k, v in PR_HINT_DEFAULTS.items()}
+    files = lines = 0
+    for row in git_out(wt, "diff", "--numstat", f"{ref}...HEAD").splitlines():
+        added, _, rest = row.partition("\t")
+        deleted = rest.partition("\t")[0]
+        files += 1
+        lines += int(added) + int(deleted) if added.isdigit() and deleted.isdigit() else 0
+    new = len(git_out(wt, "diff", "--name-only", "--diff-filter=A", f"{ref}...HEAD").splitlines())
+    found = [f"{n} {label} (limit {limits[k]})" for k, n, label in (("files", files, "files changed"), ("lines", lines, "lines changed"), ("new_files", new, "new files"))
+             if limits[k] and n >= limits[k]]
+    return ", ".join(found)
+
+
 def _ship(ws: Workspace, args: list[str]) -> int:
     from .runner import run_e2e, test_t1
 
     if not args:
-        die("usage: ship <batch> [--yes] [--skip-e2e]")
+        die("usage: ship <batch> [--yes] [--pr] [--skip-e2e]")
     batch = need_batch(ws, args[0])
-    yes = skip_e2e = skip_smoke = skip_gate = False
+    yes = skip_e2e = skip_smoke = skip_gate = force_pr = False
     for a in args[1:]:
         if a == "--yes":
             yes = True
+        elif a == "--pr":
+            force_pr = True
         elif a == "--skip-e2e":
             skip_e2e = True
         elif a == "--skip-smoke":
@@ -308,8 +334,8 @@ def _ship(ws: Workspace, args: list[str]) -> int:
                 f"run 'ms-workspace integrate {batch}' first (or 'clean --force' to discard them)")
         if base in (ws.repo_cfg(r).get("release") or []):
             die(f"{r}: base '{base}' is a release branch; ship never targets those")
-        if (ws.repo_cfg(r).get("push") or "direct") == "pr" and not shutil.which("gh"):
-            die(f"{r}: push = \"pr\" needs the GitHub CLI (gh) in PATH; nothing was pushed")
+        if push_mode(ws, r, force_pr) == "pr" and not shutil.which("gh"):
+            die(f"{r}: a pull request needs the GitHub CLI (gh) in PATH; nothing was pushed")
         if not git_ok(ws.root / r, "fetch", "origin", base, "--quiet"):
             eprint(f"warn: could not fetch {r}/{base}")
         if ahead_of_base(wt, base) == 0:
@@ -323,7 +349,7 @@ def _ship(ws: Workspace, args: list[str]) -> int:
     print(f"Plan for batch '{batch}' (this is what would be sent):")
     for r in repos:
         wt, base = ws.batch_dir / batch / r, ws.base(r)
-        mode = ws.repo_cfg(r).get("push") or "direct"
+        mode = push_mode(ws, r, force_pr)
         ref = base_ref(wt, base)
         n = ahead_of_base(wt, base)
         print(f"  {r}: int/{batch} -> {base} ({mode}, {n} commits)")
@@ -334,6 +360,9 @@ def _ship(ws: Workspace, args: list[str]) -> int:
         stat = git_out(wt, "diff", "--shortstat", f"{ref}...HEAD")
         if stat:
             print(f"      {stat}")
+        why = pr_recommendation(ws, wt, ref) if mode != "pr" else ""
+        if why:
+            print(f"      RECOMMEND A PR: {why}. A direct push sends it all to {base} at once; to open a PR instead: ms-workspace ship {batch} --pr")
     from .gate import gate_batch, report
     gate_lines, gate_blocks, gate_warns = report(gate_batch(ws, batch))
     print("  gate: " + ("clean" if not gate_blocks and not gate_warns else f"{gate_blocks} blocking, {gate_warns} warning(s)") + ("  [skipped by --skip-gate]" if skip_gate else ""))
@@ -379,13 +408,13 @@ def _ship(ws: Workspace, args: list[str]) -> int:
     record = {"batch": batch, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "repos": {}}
     for r in repos:
         wt, base = ws.batch_dir / batch / r, ws.base(r)
-        record["repos"][r] = {"base": base, "mode": ws.repo_cfg(r).get("push") or "direct", "branch": f"int/{batch}",
+        record["repos"][r] = {"base": base, "mode": push_mode(ws, r, force_pr), "branch": f"int/{batch}",
                               "before": git_out(wt, "rev-parse", f"origin/{base}"), "after": git_out(wt, "rev-parse", "HEAD"), "pushed": False}
     record_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.write_text(json.dumps(record, indent=2))
     for r in repos:
         wt, base = ws.batch_dir / batch / r, ws.base(r)
-        mode = ws.repo_cfg(r).get("push") or "direct"
+        mode = push_mode(ws, r, force_pr)
         if mode == "pr":
             p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"int/{batch}"])
             if p.returncode != 0:

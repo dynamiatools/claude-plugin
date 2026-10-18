@@ -500,7 +500,7 @@ class TestGuard(Base):
     def test_blocks_publishing_commands_inside_a_batch(self):
         d = self.ws.batch("b1")
         for cmd in ("git push origin int/b1", "git -C . push --force", "git push", "gh pr create --fill",
-                    "gh pr merge 3", "ms-workspace ship b1 --yes", "ms-workspace clean b1"):
+                    "gh pr merge 3", "ms-workspace ship b1 --yes --skip-gate", "ms-workspace clean b1"):
             with self.subTest(cmd=cmd):
                 r = self.guard(cmd, d / "lib")
                 self.assertEqual(r.returncode, 2, cmd)
@@ -509,7 +509,8 @@ class TestGuard(Base):
 
     def test_allows_normal_commands_inside_a_batch(self):
         d = self.ws.batch("b1")
-        for cmd in ("git status", "git commit -m 'fix push handling'", "ms-workspace test t0", "ls"):
+        for cmd in ("git status", "git commit -m 'fix push handling'", "ms-workspace test t0", "ls",
+                    "ms-workspace plan b1 --pr", "ms-workspace ship b1", "ms-workspace ship b1 --pr --yes", "rtk ms-workspace ship b1 --yes"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.guard(cmd, d / "lib").returncode, 0, cmd)
 
@@ -1564,6 +1565,49 @@ class TestPrMode(Base):
         self.assertNotIn("feature", self.ws.remote_log("lib"), "pr mode must not touch the base branch")
         call = (self.ws.tmp / "gh-calls").read_text()
         self.assertIn("pr create --base next --head int/b1", call)
+
+    def test_pr_flag_opens_a_pr_even_when_the_repo_pushes_directly(self):
+        self.ws.set_toml(DEFAULT_TOML)   # lib is "direct" here
+        env = {"PATH": self.fake_path(True)}
+        plan = self.ws.ms("plan", "b1", "--pr", env=env)
+        self.assertOk(plan)
+        self.assertIn("(pr, 1 commits)", plan.stdout)
+        self.assertIn("(direct, 1 commits)", self.ws.ms("plan", "b1", env=env).stdout)
+        r = self.ws.ms("ship", "b1", "--yes", "--pr", "--skip-e2e", env=env)
+        self.assertOk(r)
+        self.assertNotIn("feature", self.ws.remote_log("lib"), "--pr must not touch the base branch")
+        self.assertIn("int/b1", self.ws.git(self.ws.tmp / "remote-lib.git", "branch", "--list"))
+        self.assertIn("pr create --base next --head int/b1", (self.ws.tmp / "gh-calls").read_text())
+        undo = self.ws.ms("undo", "b1", env=env)
+        self.assertIn("gh pr close", undo.stdout)
+
+    def test_big_changes_get_a_pr_recommendation_but_the_mode_is_not_changed(self):
+        self.ws.set_toml(DEFAULT_TOML + "[ship]\nrecommend_pr_new_files = 3\nrecommend_pr_files = 0\n")
+        d = self.ws.root / ".batches" / "b1" / "lib"
+        small = self.ws.ms("plan", "b1")
+        self.assertNotIn("RECOMMEND A PR", small.stdout)
+        self.ws.commit(d, "many", {f"n{i}.txt": "x\n" for i in range(4)})
+        big = self.ws.ms("plan", "b1")
+        self.assertOk(big)
+        self.assertIn("RECOMMEND A PR: 5 new files (limit 3)", big.stdout)
+        self.assertIn("ship b1 --pr", big.stdout)
+        self.assertIn("(direct, 2 commits)", big.stdout)
+        self.assertNotIn("RECOMMEND", self.ws.ms("plan", "b1", "--pr").stdout)
+        self.ws.set_toml(DEFAULT_TOML + "[ship]\nrecommend_pr_new_files = 0\nrecommend_pr_files = 0\nrecommend_pr_lines = 0\n")
+        self.assertNotIn("RECOMMEND", self.ws.ms("plan", "b1").stdout)
+
+    def test_lines_threshold_counts_added_and_deleted_lines(self):
+        self.ws.set_toml(DEFAULT_TOML + "[ship]\nrecommend_pr_lines = 6\nrecommend_pr_files = 0\nrecommend_pr_new_files = 0\n")
+        d = self.ws.root / ".batches" / "b1" / "lib"
+        self.ws.commit(d, "edit", {"a.txt": "1\n2\n3\n4\n"})   # +4 -1, plus the line of the setUp commit
+        self.assertIn("RECOMMEND A PR: 6 lines changed (limit 6)", self.ws.ms("plan", "b1").stdout)
+
+    def test_pr_flag_without_gh_stops_before_anything_is_pushed(self):
+        self.ws.set_toml(DEFAULT_TOML)
+        r = self.ws.ms("ship", "b1", "--yes", "--pr", "--skip-e2e", env={"PATH": self.fake_path(False)})
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("needs the GitHub CLI", r.stderr)
+        self.assertNotIn("int/b1", self.ws.git(self.ws.tmp / "remote-lib.git", "branch", "--list"))
 
     def test_missing_gh_stops_before_anything_is_pushed(self):
         r = self.ws.ms("ship", "b1", "--yes", "--skip-e2e", env={"PATH": self.fake_path(False)})

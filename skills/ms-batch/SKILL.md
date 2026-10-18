@@ -35,5 +35,5 @@ Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/.batch
 5. **Tell the user how to work in it**: `cd` into the worktree and run `claude`, or `claude --bg` per agent worktree and watch them with `claude agents`. To see the code in an IDE, suggest `ms-workspace open <batch>` (VS Code or IntelliJ, add `--agent <task>` for an agent's worktrees); the user runs it, it never changes Git. Remind that agents commit locally only and that `/ms-integrate` comes next.
 
 ## Notes
-- Never run `git push`, `gh pr create`, or `ms-workspace ship|clean` from here.
+- Never run `git push` or `gh pr create` by hand, nor `ms-workspace clean`, from here. Publishing is `/ms-ship`, only when the user asks.
 - To see what changed so far: `ms-workspace affected` (inside a worktree).
