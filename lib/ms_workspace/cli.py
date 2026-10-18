@@ -15,6 +15,7 @@ Usage:
   ms-workspace batch new <name> [repo...]    create a batch (one worktree per repo, branch int/<name>)
   ms-workspace affected                      JSON: changed repos/modules and their dependents
   ms-workspace agent new <batch> <task> [repo...]   isolated worktree per agent (branch agent/<batch>/<task>)
+  ms-workspace open <batch> [--ide code|idea] [--repo R] [--agent TASK] [--dry-run]   open the batch's worktrees in VS Code or IntelliJ (git untouched)
   ms-workspace env [batch] [--setup] [--trust]   copy ignored files (.worktreeinclude, env_files) into the batch worktrees
   ms-workspace test t0                       test what changed in the current repo (add --no-cache to force a run)
   ms-workspace test t1 [batch]               affected + critical modules for every changed repo of the batch
@@ -112,6 +113,9 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd == "gate":
         from .gate import cmd_gate
         return cmd_gate(Workspace.load(required=False), args)
+    if cmd == "open":
+        from .ide import cmd_open
+        return cmd_open(Workspace.load(), args)
     if cmd == "docker":
         from .dockertools import cmd_docker
         return cmd_docker(Workspace.load(required=False), args)

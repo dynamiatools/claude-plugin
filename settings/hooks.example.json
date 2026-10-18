@@ -171,6 +171,7 @@
       "Bash(ms-workspace ship:*)",
       "Bash(ms-workspace clean:*)",
       "Bash(ms-workspace env:*)",
+      "Bash(ms-workspace open:*)",
       "Bash(ms-workspace setup-hooks:*)",
       "Bash(ms-workspace undo:*)",
       "Bash(ms-workspace http run:*)",

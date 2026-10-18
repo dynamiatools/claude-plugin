@@ -109,7 +109,7 @@ def cmd_env(ws: Workspace, args: list[str]) -> int:
         if setup and cmd:
             print(f"    setup: {cmd}")
             with ws.heavy_lock(1800):
-                r = subprocess.run(["bash", "-c", cmd], cwd=d, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+                r = subprocess.run(["bash", "-c", cmd], cwd=d, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=ws.run_env(repo))
             if r.returncode == 0:
                 ws.log("env.setup", "ok", repo, batch, cmd)
             else:

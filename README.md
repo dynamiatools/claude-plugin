@@ -44,6 +44,14 @@ Everything uses the `ms-` prefix so nothing collides with other skills; agents a
 | `/ms-report` | How it is going: plan usage, where tokens went, flaky or slow tests, next step |
 | `/ms-tmux-session` | Starts a tmux session with Claude Code (and Remote Control) in a project folder |
 | `/ms-code-tunnel` | Opens a Cloudflare tunnel to the remote code viewer for the current repo |
+| `/ms-test` | Runs t0, t1 or t2 and triages failures |
+| `/ms-gate` | Scans what would be sent for secrets and leftovers (read-only) |
+| `/ms-memory` | Saves and finds the workspace's durable notes: decisions, lessons, gotchas, handoffs |
+| `/ms-recall` | Searches past sessions, notes and the log (read-only) |
+| `/ms-release` | What waits to go to qa/main and release notes (read-only) |
+| `/ms-sys` | Machine load, disk, memory, ports and leftover processes (read-only) |
+| `/ms-http` | API checks with assertions and local mock servers |
+| `/ms-open` | Opens a batch or an agent's worktrees in VS Code or IntelliJ (never touches Git) |
 | `/ms-git-status` | Compact, read-only status card of the current git repo |
 
 **Agents** (read-only; the first three run on Haiku so the main model does not spend tokens on reading and summarizing)
@@ -72,6 +80,10 @@ Everything stays local until `ship`. Agents commit locally and never push.
 | 7 | `ship <batch> --yes` | Merges a moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`, needs `gh`). Never targets a `release` branch, never force-pushes |
 | 8 | `undo <batch> [--yes]` | Reverts the last ship: every `ship --yes` records what each base branch pointed to before and after. `undo` shows the plan; with `--yes` it pushes one new commit per repo that restores the previous tree (history kept, never a force-push). If someone else pushed in the meantime it refuses for that repo and prints the exact `git revert` commands; in `pr` mode it prints how to close the PR. Works after `clean` too |
 | 9 | `clean [<batch>]` | Lists batches, or removes one whose branch is in its base branch **and** whose agent branches are all integrated; otherwise it refuses and names them (`--force` discards on purpose) |
+
+`ms-workspace open <batch> [--ide code|idea] [--repo R] [--agent TASK] [--dry-run]` opens the batch's real worktree paths in an IDE and never touches Git (no checkout, commit, merge or push). VS Code gets one generated `.ms-workspace/ide/<batch>.code-workspace` (outside every repo, rewritten only when it changes), so search and Git see only that batch; IntelliJ opens each worktree as its own project, because it recognizes Maven/Gradle modules only from the opened directory's own `pom.xml`/`build.gradle` (use `--repo` for one window; ignore `.idea/` in the repo, or `ship` sees it as uncommitted). `--agent TASK` opens that agent's worktrees. The launcher is found on `PATH` (and the JetBrains Toolbox scripts), or set it in `workspace.toml`: `[ide]` with `default = "code"`, `code = "..."`, `idea = "..."`. `open` is in `ask` because it runs a configured command.
+
+A repo can set `env = ["NAME=value", ...]` in `workspace.toml`; those variables are added to its `test`, `[e2e]` (the e2e repo's) and `env --setup` commands. A changed value invalidates the remembered test pass, a malformed entry stops with a clear error. The file is shared and committed, so keep secrets in `env_files` instead.
 
 Names are validated, and a failed `batch new` or `agent new` rolls back what it created. `ms-workspace env [batch] [--setup] [--trust]` re-copies ignored files, runs each repo's `setup` command and marks worktrees as trusted so background agents skip the trust dialog.
 

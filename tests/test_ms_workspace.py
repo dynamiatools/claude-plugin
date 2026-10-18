@@ -1592,6 +1592,169 @@ class TestUsageEdgeCases(Base):
         self.assertNotIn("Traceback", r.stderr)
 
 
+class TestOpen(Base):
+    """`open` launches a fake IDE that records its arguments; Git must be left exactly as it was."""
+
+    def setUp(self):
+        super().setUp()
+        self.bin = self.ws.tmp / "bin"
+        self.bin.mkdir()
+        self.calls = self.ws.tmp / "calls.txt"
+        for name in ("code", "idea"):
+            self.fake(name)
+        self.env = {"PATH": f"{self.bin}:{os.environ['PATH']}"}
+
+    def fake(self, name):
+        exe = self.bin / name
+        exe.write_text(f'#!/bin/sh\necho "{name} $@" >> {self.calls}\n')
+        exe.chmod(0o755)
+
+    def opened(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
+
+    def heads(self, b):
+        return {r: self.ws.git(b / r, "rev-parse", "HEAD") + self.ws.git(b / r, "status", "--porcelain") for r in ("lib", "app")}
+
+    def test_vscode_workspace_file_lists_the_real_worktrees_and_is_idempotent(self):
+        b = self.ws.batch("b1")
+        before = self.heads(b)
+        r = self.ws.ms("open", "b1", "--ide", "code", env=self.env)
+        self.assertOk(r)
+        f = self.ws.root / ".ms-workspace" / "ide" / "b1.code-workspace"
+        data = json.loads(f.read_text())
+        self.assertEqual([x["path"] for x in data["folders"]], [str(b / "app"), str(b / "lib")])
+        self.assertEqual(self.opened(), [f"code {f}"])
+        mtime = f.stat().st_mtime_ns
+        self.assertOk(self.ws.ms("open", "b1", "--ide", "code", env=self.env))
+        self.assertEqual(f.stat().st_mtime_ns, mtime)
+        self.assertEqual(len(self.opened()), 2)
+        self.assertEqual(self.heads(b), before)
+        self.assertEqual(self.ws.git(self.ws.root / "lib", "status", "--porcelain"), "")
+
+    def test_batches_get_separate_workspace_files(self):
+        self.ws.batch("b1")
+        self.ws.batch("b2")
+        self.assertOk(self.ws.ms("open", "b1", "--ide", "code", env=self.env))
+        self.assertOk(self.ws.ms("open", "b2", "--ide", "code", env=self.env))
+        ide = self.ws.root / ".ms-workspace" / "ide"
+        paths = {n: [x["path"] for x in json.loads((ide / f"{n}.code-workspace").read_text())["folders"]] for n in ("b1", "b2")}
+        self.assertTrue(all("/b1/" in p for p in paths["b1"]) and all("/b2/" in p for p in paths["b2"]))
+
+    def test_agent_worktrees_and_repo_filter(self):
+        b = self.ws.batch("b1")
+        self.assertOk(self.ws.ms("agent", "new", "b1", "t1", "lib"))
+        self.assertOk(self.ws.ms("open", "b1", "--agent", "t1", "--ide", "code", env=self.env))
+        data = json.loads((self.ws.root / ".ms-workspace" / "ide" / "b1--t1.code-workspace").read_text())
+        self.assertEqual([x["path"] for x in data["folders"]], [str(b / ".agents" / "t1" / "lib")])
+        bad = self.ws.ms("open", "b1", "--agent", "nope", "--ide", "code", env=self.env)
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("known: t1", bad.stderr)
+        self.assertEqual(self.ws.ms("open", "b1", "--agent", "t1", "--repo", "app", "--ide", "code", env=self.env).returncode, 1)
+
+    def test_idea_opens_each_worktree_as_its_own_project(self):
+        b = self.ws.batch("b1")
+        r = self.ws.ms("open", "b1", "--ide", "idea", env=self.env)
+        self.assertOk(r)
+        self.assertEqual(self.opened(), [f"idea {b / 'app'}", f"idea {b / 'lib'}"])
+        self.assertIn("does not ignore .idea/", r.stdout)
+        self.assertFalse((self.ws.root / ".ms-workspace" / "ide").exists())
+        self.calls.unlink()
+        self.assertOk(self.ws.ms("open", "b1", "--ide", "idea", "--repo", "lib", env=self.env))
+        self.assertEqual(self.opened(), [f"idea {b / 'lib'}"])
+
+    def test_dry_run_launches_and_writes_nothing(self):
+        self.ws.batch("b1")
+        r = self.ws.ms("open", "b1", "--dry-run", env=self.env)
+        self.assertOk(r)
+        self.assertIn("would run: ", r.stdout)
+        self.assertEqual(self.opened(), [])
+        self.assertFalse((self.ws.root / ".ms-workspace" / "ide").exists())
+
+    def test_default_ide_comes_from_config_then_from_what_is_installed(self):
+        self.ws.batch("b1")
+        self.assertIn("code ", self.ws.ms("open", "b1", "--dry-run", env=self.env).stdout)
+        self.ws.set_toml(DEFAULT_TOML + '[ide]\ndefault = "idea"\n')
+        self.assertIn("idea ", self.ws.ms("open", "b1", "--dry-run", env=self.env).stdout)
+
+    def test_configured_executable_wins_and_may_carry_arguments(self):
+        self.ws.batch("b1")
+        custom = self.bin / "my-code"
+        custom.write_text(f'#!/bin/sh\necho "custom $@" >> {self.calls}\n')
+        custom.chmod(0o755)
+        self.ws.set_toml(DEFAULT_TOML + f'[ide]\ncode = "{custom} --reuse-window"\n')
+        self.assertOk(self.ws.ms("open", "b1", "--ide", "code", env=self.env))
+        self.assertTrue(self.opened()[0].startswith("custom --reuse-window "))
+
+    def test_missing_ide_and_bad_input_fail_clearly(self):
+        self.ws.batch("b1")
+        bare = {"PATH": "/usr/bin:/bin"}
+        r = self.ws.ms_py("open", "b1", "--ide", "idea", env=bare)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("idea not found", r.stderr)
+        self.assertEqual(self.ws.ms_py("open", "b1", env=bare).returncode, 1)
+        self.assertIn("unknown IDE", self.ws.ms("open", "b1", "--ide", "vim", env=self.env).stderr)
+        self.assertIn("unknown batch", self.ws.ms("open", "nope", env=self.env).stderr)
+        self.assertIn("invalid batch name", self.ws.ms("open", "../lib", env=self.env).stderr)
+        self.assertIn("invalid agent name", self.ws.ms("open", "b1", "--agent", "../x", env=self.env).stderr)
+        self.assertIn("needs a value", self.ws.ms("open", "b1", "--ide", env=self.env).stderr)
+
+    def test_batch_is_taken_from_the_current_directory(self):
+        b = self.ws.batch("b1")
+        self.assertOk(self.ws.ms("open", "--ide", "code", cwd=b / "lib", env=self.env))
+        self.assertIn("b1.code-workspace", self.opened()[0])
+
+
+class TestRepoEnv(Base):
+    def toml(self, env, extra=""):
+        return f"""
+        name = "t"
+        [repos.lib]
+        base = "next"
+        env = {env}
+        setup = "echo setup=$GREETING > setup.out"
+        [repos.lib.test]
+        unit = "echo got=$GREETING:$URL > {self.ws.tmp}/env.out"
+        [repos.app]
+        base = "next"
+        [repos.app.test]
+        unit = "echo app=${{GREETING:-unset}}"
+        {extra}
+        """
+
+    def test_variables_reach_test_and_setup_commands_only_for_their_repo(self):
+        self.ws.set_toml(self.toml('["GREETING=hi", "URL=http://x/?a=b"]'))
+        b = self.ws.batch("b1")
+        self.assertOk(self.ws.ms("test", "t0", "--no-cache", cwd=b / "lib"))
+        self.assertEqual((self.ws.tmp / "env.out").read_text().strip(), "got=hi:http://x/?a=b")
+        r = self.ws.ms("test", "t0", "--no-cache", cwd=b / "app")
+        self.assertOk(r)
+        self.assertEqual(self.ws.ms("env", "b1", "--setup").returncode, 0)
+        self.assertEqual((b / "lib" / "setup.out").read_text().strip(), "setup=hi")
+
+    def test_changing_a_value_invalidates_the_remembered_pass(self):
+        self.ws.set_toml(self.toml('["GREETING=one"]'))
+        b = self.ws.batch("b1")
+        self.ws.ms("test", "t0", cwd=b / "lib")
+        self.assertIn("cached", self.ws.ms("test", "t0", cwd=b / "lib").stdout)
+        self.ws.set_toml(self.toml('["GREETING=two"]'))
+        self.assertNotIn("cached", self.ws.ms("test", "t0", cwd=b / "lib").stdout)
+        self.assertEqual((self.ws.tmp / "env.out").read_text().strip(), "got=two:")
+
+    def test_e2e_gets_the_env_of_its_repo(self):
+        self.ws.set_toml(self.toml('["GREETING=e2e"]', '[e2e]\ncommand = "echo $GREETING > e2e.out"\nrepo = "lib"'))
+        b = self.ws.batch("b1")
+        self.assertOk(self.ws.ms("test", "t2", "b1"))
+        self.assertEqual((b / "lib" / "e2e.out").read_text().strip(), "e2e")
+
+    def test_malformed_entries_are_rejected(self):
+        b = self.ws.batch("b1")
+        for bad in ('["NOEQUALS"]', '["1BAD=x"]', '["A B=x"]'):
+            self.ws.set_toml(self.toml(bad))
+            r = self.ws.ms("test", "t0", cwd=b / "lib")
+            self.assertEqual(r.returncode, 1, bad)
+            self.assertIn("is not NAME=value", r.stderr)
+
+
 class TestRepoHygiene(unittest.TestCase):
     def test_no_bytecode_or_state_is_tracked(self):
         tracked = run(["git", "ls-files"], cwd=REPO).stdout.splitlines()

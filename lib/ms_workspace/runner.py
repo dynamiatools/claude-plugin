@@ -18,11 +18,11 @@ def _tail(path: str, n: int = 40) -> str:
     return "\n".join(Path(path).read_text(errors="replace").splitlines()[-n:])
 
 
-def _run_locked(ws: Workspace, cmd: str, cwd: Path, timeout: float) -> tuple[int, str]:
+def _run_locked(ws: Workspace, cmd: str, cwd: Path, timeout: float, env: dict | None = None) -> tuple[int, str]:
     """Run `bash -c cmd` under the workspace heavy lock; returns (exit code, output file path)."""
     fd, out = tempfile.mkstemp(prefix="ms-ws-")
     with os.fdopen(fd, "w") as fh, ws.heavy_lock(timeout):
-        rc = subprocess.run(["bash", "-c", cmd], cwd=cwd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL).returncode
+        rc = subprocess.run(["bash", "-c", cmd], cwd=cwd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env).returncode
     return rc, out
 
 
@@ -64,13 +64,14 @@ def run_tests(ws: Workspace, repo: str, directory: Path, level: str, batch: str 
 
     memo_dir = ws.state_dir / "memo"
     memo_dir.mkdir(parents=True, exist_ok=True)
-    key = _memo_key(ws, repo, directory, batch, cmd)
+    extra = ws.repo_env(repo)
+    key = _memo_key(ws, repo, directory, batch, cmd + (f"\0{sorted(extra.items())}" if extra else ""))
     if not os.environ.get("MS_NO_MEMO") and (memo_dir / f"{repo}-{key}").exists():
         print(f"PASS {level} {repo} (cached: same code and command already passed): {cmd}")
         ws.log(f"test.{level}", "ok", repo, batch, f"cached: {cmd}", key=key, cached=True)
         return 0
     start = started_at = time.time()
-    rc, out = _run_locked(ws, cmd, directory, 1800)
+    rc, out = _run_locked(ws, cmd, directory, 1800, ws.run_env(repo))
     secs = int(time.time() - start)
     try:
         if rc == 0:
@@ -105,7 +106,7 @@ def run_e2e(ws: Workspace, batch: str) -> int:
     if batch and erepo and (ws.batch_dir / batch / erepo).is_dir():
         directory = ws.batch_dir / batch / erepo
     start = time.time()
-    rc, out = _run_locked(ws, cmd, directory, 3600)
+    rc, out = _run_locked(ws, cmd, directory, 3600, ws.run_env(erepo) if erepo else None)
     secs = int(time.time() - start)
     try:
         if rc == 0:

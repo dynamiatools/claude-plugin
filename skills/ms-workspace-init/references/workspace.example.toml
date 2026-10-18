@@ -29,6 +29,11 @@ max_file_kb = 1024
 # url = "https://ntfy.example.com/a-private-hard-to-guess-topic"
 # on = ["ship"]              # also announce when `ship --yes` finishes or fails
 
+[ide]                        # optional; `ms-workspace open <batch>` finds code / idea on PATH by itself
+# default = "code"           # "code" (VS Code) or "idea" (IntelliJ IDEA) when --ide is not given
+# code = "/opt/vscode/bin/code"
+# idea = "/opt/idea/bin/idea.sh"
+
 [recall]
 days = 90                    # how far back sessions are indexed for `ms-workspace recall`
 
@@ -52,6 +57,7 @@ deps = []                    # repos this one depends on
 critical = []                # modules always tested in t1/t2 (money, security, ...)
 push = "direct"              # "direct" (push int/<batch> to base) or "pr" (open a PR)
 # tasks = "github"           # overrides the workspace-wide tracking mode for this repo
+# env = ["SPRING_PROFILES_ACTIVE=test", "API_URL=http://localhost:8080"]   # NAME=value for this repo's test, e2e and setup commands (no secrets: this file is shared)
 # env_files = [".env.local"] # extra ignored files copied into every new worktree (plus .worktreeinclude)
 # setup = "pnpm install --frozen-lockfile"   # run by `ms-workspace env --setup`
 [repos.core-lib.test]

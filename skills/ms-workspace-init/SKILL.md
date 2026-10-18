@@ -51,6 +51,7 @@ what cannot be detected, and keep every question short.
    - **Release branches** per repo (e.g. `qa`, `main`), or none.
    - **e2e**: the command and the repo that owns it, or "none yet".
    - Whether the base branch accepts direct push (default: yes).
+   - Optional, only if the user brings them up: `env = ["NAME=value"]` per repo (variables for its test, e2e and setup commands; never secrets) and `[ide]` (`default`, `code`, `idea`) for `ms-workspace open`. Both are documented in the example file.
 
 6. **Write `<root>/workspace.toml`** following
    `~/.claude/skills/ms-workspace-init/references/workspace.example.toml`.

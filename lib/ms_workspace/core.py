@@ -4,6 +4,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import subprocess
 import time
 from contextlib import contextmanager
@@ -83,6 +84,21 @@ class Workspace:
 
     def repo_cfg(self, repo: str) -> dict:
         return self.get("repos", repo, default={})
+
+    def repo_env(self, repo: str) -> dict[str, str]:
+        """Variables from `env = ["NAME=value", ...]` of a repo, validated; applied to its test, e2e and setup commands."""
+        out = {}
+        for item in self.repo_cfg(repo).get("env") or []:
+            name, sep, value = str(item).partition("=")
+            if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                die(f"repos.{repo}.env: '{item}' is not NAME=value")
+            out[name] = value
+        return out
+
+    def run_env(self, repo: str) -> dict[str, str] | None:
+        """Process environment for a repo's commands (None = inherit unchanged)."""
+        extra = self.repo_env(repo)
+        return {**os.environ, **extra} if extra else None
 
     def base(self, repo: str) -> str:
         return self.repo_cfg(repo).get("base") or "main"
