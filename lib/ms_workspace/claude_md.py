@@ -36,7 +36,7 @@ def render(ws: Workspace) -> str:
     out += ["", "## Rules for agents",
             "- Work only inside the repo/module assigned to your task, inside a batch worktree (`.batches/<batch>/...`).",
             "- Commit locally. Never `git push`, `gh pr create|merge` or `ms-workspace clean|undo` by hand: a hook blocks them. "
-            "Publishing goes through `/ms-ship` (plan, confirmation, `ms-workspace ship`), and only when the user asks: "
+            "Publishing goes through `/dynamia:ship` (plan, confirmation, `ms-workspace ship`), and only when the user asks: "
             "\"open a PR\" means `ship --pr`; \"ship\" or \"publish\" uses each repo's configured push mode. If the plan says RECOMMEND A PR, tell the user and let them choose.",
             "- After changes run `ms-workspace test t0` (tests only what changed). Fix failures before saying you are done.",
             "- Do not create branches or worktrees by hand; use `ms-workspace batch new` / `agent new`.",
@@ -52,7 +52,7 @@ def render(ws: Workspace) -> str:
             "`ms-workspace memory add --type handoff --batch <batch> \"state, next step, files touched\"`.",
             "", "## Batch flow (human-driven)",
             "`batch new` -> `agent new` -> `test t0` -> `integrate` -> `test t1` -> `ship --yes` (or `--pr`) -> `clean`.",
-            "Skills: /ms-batch, /ms-integrate, /ms-ship.",
+            "Skills: /dynamia:batch, /dynamia:integrate, /dynamia:ship.",
             "", "## Saving tokens",
             "- One agent by default; parallel agents only for independent repos or modules.",
             "- Read `ms-workspace context`, `status` and `log` before exploring the repos.",
@@ -60,8 +60,8 @@ def render(ws: Workspace) -> str:
             "(path plus the text sent with them), so you can look at an earlier screenshot with Read instead of asking for it again.",
             "- Hooks shorten huge Bash output (the full text is saved to a file they name) and warn when you re-read an unchanged file: "
             "narrow commands (grep, head, the failing test only) and reuse what is already in context.",
-            "- Delegate code search to `ms-agent-scout`, failing-test analysis to `ms-agent-test-triage`, "
-            "summaries and commit drafts to `ms-agent-summarizer` (all Haiku).",
+            "- Delegate code search to `dynamia:scout`, failing-test analysis to `dynamia:test-triage`, "
+            "summaries and commit drafts to `dynamia:summarizer` (all Haiku).",
             "", "## Tool preference"]
     discovery = ws.get("tools", "discovery", default=["idea", "codebase-memory", "grep"])
     out += [f"{i}. {_tool_label(t)}" for i, t in enumerate(discovery, 1)]

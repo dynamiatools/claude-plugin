@@ -7,7 +7,7 @@ from .core import MsError, Workspace
 
 USAGE = """\
 ms-workspace: mechanical helper for the multi-repo batch workflow.
-Reads <workspace>/workspace.toml (created by the ms-workspace-init skill).
+Reads <workspace>/workspace.toml (created by the dynamia:workspace-init skill).
 Deterministic on purpose: skills and hooks call it so the model does not
 have to spend tokens on git/test plumbing.
 

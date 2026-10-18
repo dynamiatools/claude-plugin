@@ -120,7 +120,7 @@ def hints(a: dict) -> list[str]:
     out = []
     if a["biggest"] and a["biggest"][0]["approx_tokens"] >= 8000:
         b = a["biggest"][0]
-        out.append(f"A single {b['tool']} result was ~{fmt(b['approx_tokens'])} tokens ({b['target'][:40]}): narrow it (offset/limit, head/tail, rtk) or delegate to ms-agent-scout.")
+        out.append(f"A single {b['tool']} result was ~{fmt(b['approx_tokens'])} tokens ({b['target'][:40]}): narrow it (offset/limit, head/tail, rtk) or delegate to dynamia:scout.")
     if a["repeated_reads"]:
         out.append(f"{a['repeated_reads'][0]['file'][-40:]} was read {a['repeated_reads'][0]['reads']} times in one session: keep the facts in context or in a memory note.")
     t = a["total"]

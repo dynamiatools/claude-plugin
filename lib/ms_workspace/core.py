@@ -66,7 +66,7 @@ class Workspace:
         root = find_workspace_root(start)
         if root is None:
             if required:
-                die("no workspace.toml found (run the ms-workspace-init skill first)")
+                die("no workspace.toml found (run the dynamia:workspace-init skill first)")
             return None
         return cls(root)
 

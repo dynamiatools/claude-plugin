@@ -595,7 +595,7 @@ class TestClaudeMd(Base):
         self.assertLess(text.index("- lib:"), text.index("- app:"))
         self.assertIn("depends on lib", text)
         self.assertIn("ms-workspace usage --check", text)
-        self.assertIn("ms-agent-scout", text)
+        self.assertIn("dynamia:scout", text)
         self.assertEqual(text.count("ms-workspace:begin"), 1)
 
     def test_regeneration_keeps_user_notes_and_updates_block(self):
@@ -1226,6 +1226,17 @@ class TestSetupHooks(Base):
         self.assertIn("added", r.stdout)
         self.assertFalse(self.settings.exists())
 
+    def test_plugin_root_drops_our_hooks_and_points_the_status_line_at_the_plugin(self):
+        self.assertOk(self.setup())
+        r = self.setup("--plugin-root", "/opt/dynamia/")
+        self.assertOk(r)
+        data = self.load()
+        self.assertNotIn("hooks", data)
+        self.assertEqual(data["statusLine"]["command"], '"/opt/dynamia/bin/ms-statusline"')
+        self.assertIn("Bash(ms-workspace status:*)", data["permissions"]["allow"])
+        again = self.setup("--plugin-root", "/opt/dynamia")
+        self.assertIn("Already up to date", again.stdout)
+
     def test_fresh_install_adds_everything_once(self):
         self.assertOk(self.setup())
         data = self.load()
@@ -1344,12 +1355,12 @@ class TestPackaging(unittest.TestCase):
                         self.assertNotIn(": ", value, f"{key} has an unquoted ': ' (invalid YAML)")
                         self.assertNotIn(" #", value, f"{key} has an unquoted ' #' (YAML comment)")
 
-    def test_agents_have_valid_frontmatter_and_the_prefix(self):
+    def test_agents_have_valid_frontmatter_and_known_names(self):
         for path in sorted((REPO / "agents").glob("*.md")):
             with self.subTest(agent=path.stem):
                 f = self.frontmatter(path)
                 self.assertEqual(f.get("name"), path.stem)
-                self.assertTrue(path.stem.startswith("ms-agent-"))
+                self.assertTrue(path.stem in {"boss", "scout", "summarizer", "test-triage"})
                 self.assertIn(f.get("model"), ("haiku", "sonnet", "opus"))
                 self.assertTrue(f.get("description"))
                 for key, value in f.items():
@@ -1375,17 +1386,22 @@ class TestPackaging(unittest.TestCase):
                 self.assertIsNone(nested.search(line), f"{path.name}:{n} reuses the f-string quote (Python 3.12+): {line.strip()[:80]}")
                 self.assertIsNone(newer.search(line), f"{path.name}:{n} uses a Python 3.12+ feature: {line.strip()[:80]}")
 
+    def test_plugin_hooks_match_the_example_hooks(self):
+        plugin = (REPO / "hooks" / "hooks.json").read_text().replace('\\"${CLAUDE_PLUGIN_ROOT}/bin/ms-workspace\\"', "ms-workspace")
+        example = json.loads((REPO / "settings" / "hooks.example.json").read_text())["hooks"]
+        self.assertEqual(json.loads(plugin)["hooks"], example)
+
     def test_example_mock_definition_is_valid(self):
         import tomllib
-        data = tomllib.loads((REPO / "skills" / "ms-workspace-init" / "references" / "mocks" / "payments.mock.toml").read_text())
+        data = tomllib.loads((REPO / "skills" / "workspace-init" / "references" / "mocks" / "payments.mock.toml").read_text())
         self.assertEqual([r["name"] for r in data["route"]][:2], ["create-payment", "declined-card"])
         sys.path.insert(0, str(REPO / "lib"))
         from ms_workspace.mock import load_def
-        self.assertEqual(len(load_def(REPO / "skills" / "ms-workspace-init" / "references" / "mocks" / "payments.mock.toml")["route"]), 5)
+        self.assertEqual(len(load_def(REPO / "skills" / "workspace-init" / "references" / "mocks" / "payments.mock.toml")["route"]), 5)
 
     def test_example_request_collection_is_valid(self):
         import tomllib
-        ref = REPO / "skills" / "ms-workspace-init" / "references" / "requests"
+        ref = REPO / "skills" / "workspace-init" / "references" / "requests"
         data = tomllib.loads((ref / "smoke.http.toml").read_text())
         self.assertEqual([r["name"] for r in data["request"]], ["health", "login", "me"])
         self.assertIn("base_url", tomllib.loads((ref / "env" / "local.toml").read_text()))
@@ -1393,17 +1409,23 @@ class TestPackaging(unittest.TestCase):
 
     def test_example_workspace_config_parses(self):
         import tomllib
-        cfg = tomllib.loads((REPO / "skills" / "ms-workspace-init" / "references" / "workspace.example.toml").read_text())
+        cfg = tomllib.loads((REPO / "skills" / "workspace-init" / "references" / "workspace.example.toml").read_text())
         self.assertIn("repos", cfg)
 
     def test_installer_links_everything_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = {**os.environ, "CLAUDE_HOME": f"{tmp}/c", "BIN_DIR": f"{tmp}/b"}
+            (Path(tmp) / "c" / "skills").mkdir(parents=True)
+            (Path(tmp) / "c" / "skills" / "ms-ship").symlink_to(REPO / "skills" / "ms-ship")  # dangling, from an older install
             first = run([str(REPO / "install.sh")], env=env)
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertTrue((Path(tmp) / "b" / "ms-workspace").is_symlink())
-            self.assertTrue((Path(tmp) / "c" / "skills" / "ms-ship").is_symlink())
-            self.assertTrue((Path(tmp) / "c" / "agents" / "ms-agent-boss.md").is_symlink())
+            self.assertFalse((Path(tmp) / "c" / "skills" / "ms-ship").is_symlink(), "old skill links are dropped")
+            self.assertFalse((Path(tmp) / "c" / "skills" / "ship").exists(), "the plugin provides skills")
+            legacy = run([str(REPO / "install.sh"), "--legacy"], env=env)
+            self.assertEqual(legacy.returncode, 0, legacy.stderr)
+            self.assertTrue((Path(tmp) / "c" / "skills" / "ship").is_symlink())
+            self.assertTrue((Path(tmp) / "c" / "agents" / "boss.md").is_symlink())
             self.assertTrue((Path(tmp) / "c" / "CLAUDE.md").is_symlink())
             second = run([str(REPO / "install.sh")], env=env)
             self.assertNotIn("backup", second.stdout)
@@ -1862,7 +1884,7 @@ class TestRepoHygiene(unittest.TestCase):
         self.assertIn("__pycache__/", (REPO / ".gitignore").read_text())
 
     def test_no_stale_references_in_skills(self):
-        init = (REPO / "skills" / "ms-workspace-init" / "SKILL.md").read_text()
+        init = (REPO / "skills" / "workspace-init" / "SKILL.md").read_text()
         self.assertNotIn(".claude/worktrees", init)
         self.assertNotIn("`root`", init.replace("Do not write a `root` key", ""))
         for path in (REPO / "skills").glob("*/SKILL.md"):

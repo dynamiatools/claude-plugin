@@ -7,6 +7,10 @@
 #   ./install.sh              install / refresh links
 #   ./install.sh --dry-run    show what would happen, change nothing
 #   ./install.sh --uninstall  remove the links created by this repo
+#   ./install.sh --legacy     also link skills and agents (only without the dynamia plugin)
+#
+# With the dynamia plugin installed, skills, agents and hooks come from the plugin;
+# this script then only links bin/ and CLAUDE.md, and removes old skill/agent links.
 #
 # Environment:
 #   CLAUDE_HOME   target config dir (default: ~/.claude)
@@ -20,11 +24,13 @@ BACKUP_DIR="$CLAUDE_HOME/backups/my-claude-$(date +%Y%m%d-%H%M%S)"
 
 DRY_RUN=0
 UNINSTALL=0
+LEGACY=0
 for arg in "$@"; do
   case "$arg" in
     --dry-run)   DRY_RUN=1 ;;
     --uninstall) UNINSTALL=1 ;;
-    -h|--help)   sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --legacy)    LEGACY=1 ;;
+    -h|--help)   sed -n '2,16p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 1 ;;
   esac
 done
@@ -63,12 +69,14 @@ unlink_ours() {
 # Every item this repo provides, as "source|target" pairs.
 items() {
   local d f
-  for d in "$REPO_DIR"/skills/*/; do
-    [[ -d "$d" ]] && echo "${d%/}|$CLAUDE_HOME/skills/$(basename "$d")"
-  done
-  for f in "$REPO_DIR"/agents/*.md; do
-    [[ -f "$f" ]] && echo "$f|$CLAUDE_HOME/agents/$(basename "$f")"
-  done
+  if [[ $LEGACY -eq 1 || $UNINSTALL -eq 1 ]]; then
+    for d in "$REPO_DIR"/skills/*/; do
+      [[ -d "$d" ]] && echo "${d%/}|$CLAUDE_HOME/skills/$(basename "$d")"
+    done
+    for f in "$REPO_DIR"/agents/*.md; do
+      [[ -f "$f" ]] && echo "$f|$CLAUDE_HOME/agents/$(basename "$f")"
+    done
+  fi
   for f in "$REPO_DIR"/bin/*; do
     [[ -f "$f" ]] && echo "$f|$BIN_DIR/$(basename "$f")"
   done
@@ -87,7 +95,18 @@ fi
 say "Installing from $REPO_DIR into $CLAUDE_HOME"
 [[ $DRY_RUN -eq 1 ]] && say "(dry run: nothing will be changed)"
 
-run mkdir -p "$CLAUDE_HOME/skills" "$CLAUDE_HOME/agents" "$BIN_DIR"
+run mkdir -p "$CLAUDE_HOME" "$BIN_DIR"
+[[ $LEGACY -eq 1 ]] && run mkdir -p "$CLAUDE_HOME/skills" "$CLAUDE_HOME/agents"
+if [[ $LEGACY -eq 0 ]]; then
+  # The plugin provides skills and agents: drop links from an earlier install of this repo
+  # (including ones left dangling by renamed skills) so nothing is listed twice.
+  for dst in "$CLAUDE_HOME"/skills/* "$CLAUDE_HOME"/agents/*; do
+    if [[ -L "$dst" && "$(readlink "$dst")" == "$REPO_DIR/"* ]]; then
+      say "  remove   $dst (now provided by the plugin)"
+      run rm "$dst"
+    fi
+  done
+fi
 while IFS='|' read -r src dst; do link "$src" "$dst"; done < <(items)
 
 # Make bundled scripts executable.
@@ -110,6 +129,7 @@ fi
 command -v claude >/dev/null 2>&1 && say "  ok       claude" || say "  MISSING  claude (https://claude.com/claude-code)"
 
 say ""
-say "Done. Start a new Claude Code session to load the skills."
+if [[ $LEGACY -eq 1 ]]; then say "Done. Start a new Claude Code session to load the skills."
+else say "Done. Install the plugin with: /plugin marketplace add $REPO_DIR  then  /plugin install dynamia@dynamia"; fi
 [[ -d "$BACKUP_DIR" ]] && say "Replaced files were backed up in $BACKUP_DIR"
 exit 0

@@ -26,7 +26,7 @@ Personal defaults for every project. A repo's own CLAUDE.md wins on code convent
 - Mark a deliberate shortcut with a `shortcut:` comment saying when to revisit it.
 
 ## Saving tokens and finishing work
-- Read the smallest slice that answers the question; delegate wide searches and summaries to the cheap `ms-agent-*` agents when available.
+- Read the smallest slice that answers the question; delegate wide searches and summaries to the cheap `dynamia:*` agents when available.
 - Before a long task or session, run `ms-workspace usage --check` if it exists. On a warning, tell the user the numbers and confirm; do not start work you cannot finish in the remaining window.
 - Prefer small steps that end in a working, committed state over large changes left half done.
 
@@ -36,4 +36,4 @@ Personal defaults for every project. A repo's own CLAUDE.md wins on code convent
 
 ## Workspaces
 - If a `workspace.toml` exists in a parent directory, you are inside a multi-repo workspace: follow its CLAUDE.md and use `ms-workspace` (`context`, `status`, `batch`, `test`) instead of ad-hoc git juggling.
-- Agents commit locally only; integration and publishing are done by the user (`/ms-integrate`, `/ms-ship`).
+- Agents commit locally only; integration and publishing are done by the user (`/dynamia:integrate`, `/dynamia:ship`).

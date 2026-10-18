@@ -20,7 +20,7 @@ PUBLISH_GH = {("pr", "create"), ("pr", "merge"), ("pr", "ready"), ("pr", "close"
               ("repo", "create"), ("repo", "delete"), ("workflow", "run")}
 LOOSE = re.compile(r"\bpush\b|\bgh\s+(pr|release|repo|api|workflow)\b|\bms-workspace\s+(clean|env|setup-hooks|undo|ps|docker)\b|\bsend-pack\b")
 MESSAGE = ("Blocked: agents in a batch worktree must not push, open or merge PRs by hand, or run 'ms-workspace clean|undo|env|setup-hooks' "
-           "or 'ship --skip-gate'. Commit locally. When the user asks to publish or open a PR, use the /ms-ship skill: "
+           "or 'ship --skip-gate'. Commit locally. When the user asks to publish or open a PR, use the /dynamia:ship skill: "
            "'ms-workspace ship <batch> [--pr] --yes' after showing the plan and getting their confirmation.")
 
 

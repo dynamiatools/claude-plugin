@@ -121,7 +121,7 @@ def cmd_doctor(ws: Workspace | None) -> int:
         want(t)
     ok("python >= 3.11") if sys.version_info >= (3, 11) else miss("python >= 3.11 (tomllib)")
     ok("claude") if shutil.which("claude") else warn("claude not in PATH")
-    ok("tmux") if shutil.which("tmux") else warn("tmux (needed by ms-tmux-session)")
+    ok("tmux") if shutil.which("tmux") else warn("tmux (needed by dynamia:tmux-session)")
     ok("rtk") if shutil.which("rtk") else warn("rtk (optional: token-optimized shell output)")
     try:
         import sqlite3
@@ -173,15 +173,18 @@ def cmd_doctor(ws: Workspace | None) -> int:
     from .setup import installed_commands, our_commands, settings_path, SOURCE
     try:
         sp = settings_path()
-        have = installed_commands(json.loads(sp.read_text())) if sp.exists() else set()
+        cfg = json.loads(sp.read_text()) if sp.exists() else {}
+        have = installed_commands(cfg)
         wanted = our_commands(json.loads(SOURCE.read_text()))
         missing = sorted(wanted - have)
-        if missing:
-            warn("not installed in settings.json: " + ", ".join(missing) + " (run /ms-setup)")
+        if any(k.startswith("dynamia@") and v for k, v in (cfg.get("enabledPlugins") or {}).items()):
+            ok("ms-workspace hooks come from the dynamia plugin")
+        elif missing:
+            warn("not installed in settings.json: " + ", ".join(missing) + " (run /dynamia:setup)")
         else:
             ok("ms-workspace hooks are installed in settings.json")
     except (OSError, ValueError):
-        warn("could not read settings.json to check hooks (run /ms-setup)")
+        warn("could not read settings.json to check hooks (run /dynamia:setup)")
 
     print("Plan usage:")
     snap = snapshot_path()

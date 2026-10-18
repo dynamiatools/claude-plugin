@@ -129,7 +129,7 @@ def cmd_handoff(ws: Workspace | None, args: list[str]) -> int:
     if "--hook" in args:
         return hook()
     if ws is None:
-        die("no workspace.toml found (run the ms-workspace-init skill first)")
+        die("no workspace.toml found (run the dynamia:workspace-init skill first)")
     batch, only_print, it = "", "--print" in args, iter(a for a in args if a != "--print")
     for a in it:
         if a == "--batch":
