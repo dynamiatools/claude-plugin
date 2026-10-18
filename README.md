@@ -1,45 +1,53 @@
-# my-claude
+# dynamia
 
-My portable [Claude Code](https://claude.com/claude-code) setup: skills, subagents, global instructions and a small tool (`ms-workspace`) for safe, token-cheap work across several repos. Clone it on any machine, run one script, and everything is ready.
+A [Claude Code](https://claude.com/claude-code) plugin for safe, token-cheap work across several repos: 18 skills, 4 helper agents, guard hooks and a small tool (`ms-workspace`) that does the git, test and bookkeeping work so the model does not. Install it with two commands.
 
-## Quick start
+## Install
 
-Install it as a Claude Code plugin named `dynamia` (skills, agents and hooks; the skills are called `/dynamia:<skill>`):
+In Claude Code:
 
 ```
-/plugin marketplace add ~/IdeaProjects/my-claude      # or <owner>/<repo> for a git remote
+/plugin marketplace add <owner>/<repo>               # or a git URL, or a local path such as ~/IdeaProjects/my-claude
 /plugin install dynamia@dynamia
 ```
 
-A plugin cannot set the status line, permissions or `~/.claude/CLAUDE.md`, so link the tool and the global instructions once:
+`dynamia@dynamia` is `<plugin>@<marketplace>`: this repo is both the plugin and its own one-plugin marketplace, and both are named `dynamia`. A private repo works with the git credentials the machine already has (SSH key without passphrase, or `gh auth login` then `gh auth setup-git`). Third-party marketplaces do not auto-update by default: turn it on in `/plugin` > Marketplaces, or run `/plugin update dynamia`.
 
-```bash
-cd ~/IdeaProjects/my-claude
-./install.sh --dry-run     # optional: preview
-./install.sh               # link bin/ (ms-workspace, ms-statusline) and CLAUDE.md; drops old skill/agent links
-```
+The plugin provides the skills (`/dynamia:<skill>`), the agents (`dynamia:<agent>`), the hooks and `ms-workspace` on the Bash tool's PATH. Claude Code does not let a plugin set the status line, permissions or `~/.claude/CLAUDE.md`, so finish once:
 
-Without the plugin, `./install.sh --legacy` links the skills and agents into `~/.claude` as before (then the skills have no `dynamia:` prefix).
+1. Clone the repo, then link the tools and the global instructions (needs `python3 >= 3.11`, `git`, `jq`):
+   ```bash
+   git clone <repo-url> ~/IdeaProjects/my-claude && cd ~/IdeaProjects/my-claude
+   ./install.sh --dry-run     # optional: preview
+   ./install.sh               # links bin/ (ms-workspace, ms-statusline) and CLAUDE.md; drops old skill/agent links
+   ```
+2. In a **new** Claude Code session run `/dynamia:setup`: it adds the status line and the permission rules to your `settings.json` (preview, confirmation, backup; `--remove` undoes it). Run it again after every `/plugin update`, because the status line path holds the plugin version.
+3. Check everything with `ms-workspace doctor`.
 
-Then, in a **new** Claude Code session:
-
-1. `/dynamia:setup`: merges the hooks, status line and permissions into your `settings.json` (preview, confirmation, backup; `--remove` undoes it).
-2. `/dynamia:workspace-init`: builds a workspace from scratch (asks which repos, clones them, detects stacks, writes `workspace.toml` and a workspace `CLAUDE.md`).
-3. `/dynamia:batch`: opens a batch of local work. From there: work, `/dynamia:integrate`, `/dynamia:ship`.
+To remove: `/plugin uninstall dynamia@dynamia`, `/dynamia:setup --remove`, `./install.sh --uninstall`.
 
 About `install.sh`:
-- With the plugin it links only `bin/` and `CLAUDE.md`; skills, agents and hooks come from the plugin (`hooks/hooks.json`).
-- It is idempotent and uses symlinks, so this repo stays the single source of truth: edit here, commit, share.
-- Files that already exist are moved to `~/.claude/backups/my-claude-<timestamp>/`, never deleted. Your own `~/.claude/CLAUDE.md` is replaced by the one in this repo (backed up first); an `@RTK.md` import in it is no longer loaded, the rtk hook keeps working.
+- It is idempotent and uses symlinks, so this repo stays the single source of truth.
+- Files that already exist are moved to `~/.claude/backups/my-claude-<timestamp>/`, never deleted. Your own `~/.claude/CLAUDE.md` is replaced by the one in this repo (backed up first).
+- `--legacy` also links skills and agents into `~/.claude`, for use without the plugin (the skills then have no `dynamia:` prefix and the hooks come from `/dynamia:setup` without `--plugin-root`).
 - `--uninstall` removes only links that point to this repo. `CLAUDE_HOME` and `BIN_DIR` redirect the targets (defaults `~/.claude` and `~/.local/bin`; make sure `BIN_DIR` is in your `PATH`).
-- It warns about missing `git`, `jq`, `python3 >= 3.11`, `tmux`, `gh`, `node` and `claude`. `ms-workspace doctor` checks the same, plus your workspace.
+
+## Use it
+
+1. `/dynamia:workspace-init`: builds a workspace from scratch (asks which repos, clones them, detects stacks, writes `workspace.toml` and a workspace `CLAUDE.md`).
+2. `/dynamia:batch`: opens a batch of local work, one isolated worktree per repo. Work in it, optionally with parallel agents.
+3. `/dynamia:test`: runs t0 (what changed), t1 (the whole batch) or t2 (end to end) and triages failures.
+4. `/dynamia:integrate`: merges the agents' branches and runs t1.
+5. `/dynamia:ship`: shows the plan, asks, syncs, tests and pushes (or opens a PR). Only when you ask.
+
+Day to day: `/dynamia:report` (plan usage and where tokens went), `/dynamia:memory` and `/dynamia:recall` (durable notes and past sessions), `/dynamia:gate` (secret scan before shipping). The hooks protect you without being invoked: agents in a batch cannot push or open PRs, and large reads are warned about (see Guardrails).
 
 ## What's inside
 
 ```
-install.sh   bin/ (ms-workspace, ms-statusline)   lib/ms_workspace/ (the tool)
-.claude-plugin/ (plugin + marketplace)   hooks/hooks.json
-skills/      agents/      CLAUDE.md (global instructions)   settings/ (hooks example)   tests/
+.claude-plugin/ (plugin.json, marketplace.json)   hooks/hooks.json   skills/   agents/
+bin/ (ms-workspace, ms-statusline)   lib/ms_workspace/ (the tool)   tests/
+install.sh   CLAUDE.md (global instructions)   settings/hooks.example.json (source for /dynamia:setup)
 ```
 
 The plugin name is the prefix, so nothing collides with other skills or agents: `/dynamia:<skill>` and `dynamia:<agent>`. The command-line tools keep the `ms-` prefix (`ms-workspace`, `ms-statusline`).
@@ -217,11 +225,11 @@ repo = "erp"
 
 ## Hooks
 
-`/dynamia:setup` (or `ms-workspace setup-hooks [--dry-run] [--remove] [--project]`) merges `settings/hooks.example.json`: idempotent, keeps every other hook, permission and setting, keeps a status line someone else configured, writes a timestamped backup. It adds `handoff --hook` (PreCompact, Stop, SessionEnd), `notify --hook` (Notification), `guard` and `readguard` (PreToolUse on Bash and Read), `outguard` (PostToolUse on Bash), `images capture` (Stop, SessionEnd), `context` (SessionStart), `readguard --reset` (SessionStart after `/clear` or a compaction), `ms-statusline` and the permission rules above. `install.sh` never edits your `settings.json` by itself.
+With the plugin, the hooks load from `hooks/hooks.json` (paths use `${CLAUDE_PLUGIN_ROOT}`), so nothing is copied into `settings.json` except the status line and permissions: `/dynamia:setup` (or `ms-workspace setup-hooks --plugin-root <plugin folder> [--dry-run] [--remove] [--project]`) does that, and removes an older copy of the hooks so they do not run twice. Without the plugin, `ms-workspace setup-hooks` merges `settings/hooks.example.json` instead: idempotent, keeps every other hook, permission and setting, keeps a status line someone else configured, writes a timestamped backup. It adds `handoff --hook` (PreCompact, Stop, SessionEnd), `notify --hook` (Notification), `guard` and `readguard` (PreToolUse on Bash and Read), `outguard` (PostToolUse on Bash), `images capture` (Stop, SessionEnd), `context` (SessionStart), `readguard --reset` (SessionStart after `/clear` or a compaction), `ms-statusline` and the permission rules above. `install.sh` never edits your `settings.json` by itself.
 
 ## Development
 
-- Everything in the repo is in English; names use the `ms-` prefix; no secrets or machine-specific paths.
+- Everything in the repo is in English; skills and agents have no prefix (the plugin name is it) and the command-line tools use `ms-`; no secrets or machine-specific paths.
 - `ms-workspace` stays standard-library only. The CLI is the contract: `tests/` drives the real tool (bare remotes, worktrees, conflicts, hooks, usage snapshots, images, installer, skill frontmatter).
 
 ```bash
@@ -231,7 +239,7 @@ python3 -m unittest tests.test_ms_workspace.TestShip -v
 
 `MS_WORKSPACE_BIN` runs the suite against another build of the tool.
 
-**Add a skill**: create `skills/<name>/SKILL.md` with `name` and `description` frontmatter (avoid an unquoted `: ` in values, the suite checks it), write clear trigger conditions in `description`, run `./install.sh`, test it in a session, commit. Agents are one file each in `agents/` and must be named `dynamia:*`.
+**Add a skill**: create `skills/<name>/SKILL.md` with `name` and `description` frontmatter (avoid an unquoted `: ` in values, the suite checks it), write clear trigger conditions in `description`, test it with `claude --plugin-dir .` (it reloads with `/reload-plugins`), run `claude plugin validate .`, commit. The plugin name is the prefix, so name it plainly (`test`, not `ms-test`). Agents are one file each in `agents/`, also without prefix. Hooks go in `hooks/hooks.json`; keep `settings/hooks.example.json` in step, the suite compares them.
 
 ## Roadmap
 

@@ -1386,6 +1386,11 @@ class TestPackaging(unittest.TestCase):
                 self.assertIsNone(nested.search(line), f"{path.name}:{n} reuses the f-string quote (Python 3.12+): {line.strip()[:80]}")
                 self.assertIsNone(newer.search(line), f"{path.name}:{n} uses a Python 3.12+ feature: {line.strip()[:80]}")
 
+    def test_plugin_hooks_match_the_example_hooks(self):
+        plugin = (REPO / "hooks" / "hooks.json").read_text().replace('\\"${CLAUDE_PLUGIN_ROOT}/bin/ms-workspace\\"', "ms-workspace")
+        example = json.loads((REPO / "settings" / "hooks.example.json").read_text())["hooks"]
+        self.assertEqual(json.loads(plugin)["hooks"], example)
+
     def test_example_mock_definition_is_valid(self):
         import tomllib
         data = tomllib.loads((REPO / "skills" / "workspace-init" / "references" / "mocks" / "payments.mock.toml").read_text())
