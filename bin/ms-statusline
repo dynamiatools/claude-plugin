@@ -13,9 +13,10 @@ input="$(cat)"
 CACHE_DIR="${MS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-workspace}"
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
-IFS=$'\t' read -r model cwd ctx p5 r5 p7 r7 < <(jq -r '[
+IFS=$'\t' read -r model cwd cost ctx p5 r5 p7 r7 < <(jq -r '[
     (.model.display_name // "?"),
     (.workspace.current_dir // .cwd // "-"),
+    (.cost.total_cost_usd // "-"),
     (.context_window.used_percentage // "-"),
     (.rate_limits.five_hour.used_percentage // "-"), (.rate_limits.five_hour.resets_at // "-"),
     (.rate_limits.seven_day.used_percentage // "-"), (.rate_limits.seven_day.resets_at // "-")
@@ -41,24 +42,45 @@ if [[ "$p5" != "-" || "$p7" != "-" ]]; then
   fi
 fi
 
-color() { # pct -> ansi color (green < 70 <= yellow < 90 <= red)
+color() { # pct -> ansi color (green < 70 <= yellow < 90 <= red); nothing when NO_COLOR is set
+  [[ -n "${NO_COLOR:-}" ]] && return
   local p="${1%%.*}"
   if   [[ "$p" -ge 90 ]]; then printf '\033[31m'
   elif [[ "$p" -ge 70 ]]; then printf '\033[33m'
   else printf '\033[32m'; fi
 }
-reset=$'\033[0m'
 
-# Current git branch of the session's directory (short hash when detached); nothing outside a repo.
-branch=""
+# Git state of the session's directory: branch (short hash when detached), uncommitted files, ahead/behind upstream.
+# Cached for MS_GIT_CACHE_SECS (default 5) seconds per directory so a big repo is not scanned on every refresh. Nothing is printed outside a repo.
+branch=""; dirty=0; ahead=0; behind=0
 if [[ "$cwd" != "-" && -d "$cwd" ]]; then
-  branch="$(GIT_OPTIONAL_LOCKS=0 git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null \
-    || GIT_OPTIONAL_LOCKS=0 git -C "$cwd" rev-parse --short HEAD 2>/dev/null)" || branch=""
+  gcache="$CACHE_DIR/git-$(printf '%s' "$cwd" | cksum | cut -d' ' -f1)"
+  mtime="$(stat -c %Y "$gcache" 2>/dev/null || echo 0)"
+  if [[ $(( now - mtime )) -lt ${MS_GIT_CACHE_SECS:-5} && -s "$gcache" ]]; then
+    IFS=$'\t' read -r branch dirty ahead behind < "$gcache"
+  else
+    export GIT_OPTIONAL_LOCKS=0
+    branch="$(git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null || git -C "$cwd" rev-parse --short HEAD 2>/dev/null)" || branch=""
+    if [[ -n "$branch" ]]; then
+      dirty="$(git -C "$cwd" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+      read -r behind ahead < <(git -C "$cwd" rev-list --left-right --count '@{u}...HEAD' 2>/dev/null) || { behind=0; ahead=0; }
+      printf '%s\t%s\t%s\t%s\n' "$branch" "${dirty:-0}" "${ahead:-0}" "${behind:-0}" > "$gcache.$$" 2>/dev/null && mv "$gcache.$$" "$gcache"
+    fi
+  fi
 fi
 
-out="[$model]"
-[[ -n "$branch" ]] && out+=" ⎇ $branch"
-[[ "$ctx" != "-" ]] && out+=" ctx ${ctx%%.*}%"
+# Colors are off when NO_COLOR is set (https://no-color.org).
+if [[ -n "${NO_COLOR:-}" ]]; then c() { :; }; reset=""; else c() { printf '\033[%sm' "$1"; }; reset=$'\033[0m'; fi
+
+out="$(c 36)[$model]$reset"
+if [[ -n "$branch" ]]; then
+  out+=" $(c 35)⎇ $branch$reset"
+  [[ "${dirty:-0}" -gt 0 ]] && out+=" $(c 33)●$dirty$reset"
+  [[ "${ahead:-0}" -gt 0 ]] && out+=" $(c 32)↑$ahead$reset"
+  [[ "${behind:-0}" -gt 0 ]] && out+=" $(c 31)↓$behind$reset"
+fi
+[[ "$ctx" != "-" ]] && out+=" ctx $(color "$ctx")${ctx%%.*}%${reset}"
+[[ "$cost" != "-" ]] && out+=" $(c 2)$(printf '$%.2f' "$cost")$reset"
 if [[ "$p5" != "-" ]]; then
   left=$(( r5 - now )); [[ $left -lt 0 ]] && left=0
   out+=" | 5h $(color "$p5")${p5%%.*}%${reset} ($((left/3600))h$(( (left%3600)/60 ))m)"

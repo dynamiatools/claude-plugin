@@ -63,7 +63,7 @@ Everything uses the `ms-` prefix so nothing collides with other skills; agents a
 | `ms-agent-summarizer` | Condenses diffs, history and logs; drafts commit messages in each repo's style |
 | `ms-agent-boss` | Opus architecture review of a batch, diff or design; returns a verdict plus blocking and should-fix findings |
 
-**Tools**: `ms-workspace` (Python 3.11+, standard library only) does the git, test and bookkeeping work so the model does not; `ms-statusline` (bash + jq) shows the model, the current git branch and usage in the footer and saves the plan-usage snapshot.
+**Tools**: `ms-workspace` (Python 3.11+, standard library only) does the git, test and bookkeeping work so the model does not; `ms-statusline` (bash + jq) shows the model, the git branch with uncommitted files and ahead/behind, context, cost and plan usage in the footer, in color (`NO_COLOR` turns it off) and saves the plan-usage snapshot.
 
 ## The batch workflow
 

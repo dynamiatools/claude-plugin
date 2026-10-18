@@ -718,7 +718,7 @@ class TestStatusline(Base):
         if kw:
             payload["rate_limits"] = {"five_hour": {"used_percentage": kw["p5"], "resets_at": now + 4 * 3600},
                                       "seven_day": {"used_percentage": kw["p7"], "resets_at": now + 4 * 86400}}
-        return run([STATUSLINE], env=self.ws.env, input=json.dumps(payload))
+        return run([STATUSLINE], env={**self.ws.env, "NO_COLOR": "1", "MS_GIT_CACHE_SECS": "0"}, input=json.dumps(payload))
 
     def test_prints_line_and_stores_snapshot_and_history(self):
         r = self.feed(p5=23.5, p7=41.2)
@@ -738,11 +738,46 @@ class TestStatusline(Base):
         self.assertEqual(r.stdout.strip(), "[Opus 5.5] ctx 12%")
         self.assertFalse((self.ws.cache / "usage.json").exists())
 
-    def line(self, cwd=None, key="cwd"):
+    def line(self, cwd=None, key="cwd", cost=None, plain=True, secs="0"):
         payload = {"model": {"display_name": "M"}, "context_window": {"used_percentage": 5}}
         if cwd is not None:
             payload.update({"workspace": {"current_dir": str(cwd)}} if key == "workspace" else {"cwd": str(cwd)})
-        return run([STATUSLINE], env=self.ws.env, input=json.dumps(payload)).stdout.strip()
+        if cost is not None:
+            payload["cost"] = {"total_cost_usd": cost}
+        env = {**self.ws.env, "MS_GIT_CACHE_SECS": secs, **({"NO_COLOR": "1"} if plain else {})}
+        return run([STATUSLINE], env=env, input=json.dumps(payload)).stdout.strip()
+
+    def test_dirty_files_ahead_behind_and_cost(self):
+        lib = self.ws.root / "lib"
+        (lib / "new.txt").write_text("x")
+        (lib / "a.txt").write_text("changed")
+        self.assertEqual(self.line(lib, cost=0.4231), "[M] ⎇ next ●2 ctx 5% $0.42")
+        self.ws.git(lib, "add", "-A")
+        self.ws.commit(lib, "local")
+        self.ws.git(lib, "branch", "--set-upstream-to=origin/next")
+        self.assertEqual(self.line(lib), "[M] ⎇ next ↑1 ctx 5%")
+        other = self.ws.tmp / "other"
+        self.ws.git(self.ws.tmp, "clone", "-q", str(self.ws.tmp / "remote-lib.git"), str(other))
+        self.ws.git(other, "checkout", "-q", "next")
+        self.ws.commit(other, "remote one", {"r.txt": "r"})
+        self.ws.git(other, "push", "-q", "origin", "next")
+        self.ws.git(lib, "fetch", "-q")
+        self.assertEqual(self.line(lib), "[M] ⎇ next ↑1 ↓1 ctx 5%")
+
+    def test_colors_by_default_and_none_with_no_color(self):
+        lib = self.ws.root / "lib"
+        (lib / "new.txt").write_text("x")
+        colored = self.line(lib, plain=False)
+        for code in ("\033[36m", "\033[35m", "\033[33m", "\033[32m"):   # model, branch, dirty, ctx
+            self.assertIn(code, colored)
+        self.assertNotIn("\033", self.line(lib))
+
+    def test_git_state_is_cached_for_a_few_seconds(self):
+        lib = self.ws.root / "lib"
+        self.assertEqual(self.line(lib, secs="60"), "[M] ⎇ next ctx 5%")
+        (lib / "new.txt").write_text("x")
+        self.assertEqual(self.line(lib, secs="60"), "[M] ⎇ next ctx 5%")
+        self.assertEqual(self.line(lib, secs="0"), "[M] ⎇ next ●1 ctx 5%")
 
     def test_shows_the_current_branch_in_a_repo_and_a_worktree(self):
         self.assertEqual(self.line(self.ws.root / "lib"), "[M] ⎇ next ctx 5%")
