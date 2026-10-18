@@ -738,6 +738,26 @@ class TestStatusline(Base):
         self.assertEqual(r.stdout.strip(), "[Opus 5.5] ctx 12%")
         self.assertFalse((self.ws.cache / "usage.json").exists())
 
+    def line(self, cwd=None, key="cwd"):
+        payload = {"model": {"display_name": "M"}, "context_window": {"used_percentage": 5}}
+        if cwd is not None:
+            payload.update({"workspace": {"current_dir": str(cwd)}} if key == "workspace" else {"cwd": str(cwd)})
+        return run([STATUSLINE], env=self.ws.env, input=json.dumps(payload)).stdout.strip()
+
+    def test_shows_the_current_branch_in_a_repo_and_a_worktree(self):
+        self.assertEqual(self.line(self.ws.root / "lib"), "[M] ⎇ next ctx 5%")
+        self.assertEqual(self.line(self.ws.root / "lib", key="workspace"), "[M] ⎇ next ctx 5%")
+        b = self.ws.batch("b1")
+        self.assertEqual(self.line(b / "lib"), "[M] ⎇ int/b1 ctx 5%")
+        self.assertEqual(self.line(b / "lib" / "sub-missing"), "[M] ctx 5%")
+
+    def test_detached_head_shows_the_short_hash_and_non_repos_show_nothing(self):
+        sha = self.ws.git(self.ws.root / "lib", "rev-parse", "--short", "HEAD")
+        self.ws.git(self.ws.root / "lib", "checkout", "-q", "--detach")
+        self.assertEqual(self.line(self.ws.root / "lib"), f"[M] ⎇ {sha} ctx 5%")
+        self.assertEqual(self.line(self.ws.tmp), "[M] ctx 5%")
+        self.assertEqual(self.line(), "[M] ctx 5%")
+
     def test_garbage_input_is_harmless(self):
         r = run([STATUSLINE], env=self.ws.env, input="nonsense")
         self.assertEqual(r.returncode, 0)

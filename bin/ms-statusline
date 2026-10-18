@@ -13,8 +13,9 @@ input="$(cat)"
 CACHE_DIR="${MS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/ms-workspace}"
 mkdir -p "$CACHE_DIR" 2>/dev/null || true
 
-IFS=$'\t' read -r model ctx p5 r5 p7 r7 < <(jq -r '[
+IFS=$'\t' read -r model cwd ctx p5 r5 p7 r7 < <(jq -r '[
     (.model.display_name // "?"),
+    (.workspace.current_dir // .cwd // "-"),
     (.context_window.used_percentage // "-"),
     (.rate_limits.five_hour.used_percentage // "-"), (.rate_limits.five_hour.resets_at // "-"),
     (.rate_limits.seven_day.used_percentage // "-"), (.rate_limits.seven_day.resets_at // "-")
@@ -48,7 +49,15 @@ color() { # pct -> ansi color (green < 70 <= yellow < 90 <= red)
 }
 reset=$'\033[0m'
 
+# Current git branch of the session's directory (short hash when detached); nothing outside a repo.
+branch=""
+if [[ "$cwd" != "-" && -d "$cwd" ]]; then
+  branch="$(GIT_OPTIONAL_LOCKS=0 git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null \
+    || GIT_OPTIONAL_LOCKS=0 git -C "$cwd" rev-parse --short HEAD 2>/dev/null)" || branch=""
+fi
+
 out="[$model]"
+[[ -n "$branch" ]] && out+=" ⎇ $branch"
 [[ "$ctx" != "-" ]] && out+=" ctx ${ctx%%.*}%"
 if [[ "$p5" != "-" ]]; then
   left=$(( r5 - now )); [[ $left -lt 0 ]] && left=0
