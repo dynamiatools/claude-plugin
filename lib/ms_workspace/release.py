@@ -59,7 +59,7 @@ def cmd_status(ws: Workspace, args: list[str]) -> int:
         print("no repo has `release = [...]` in workspace.toml")
         return 0
     for r in repos:
-        d, base = ws.root / r, ws.base(r)
+        d, base = ws.repo_dir(r), ws.base(r)
         if fetch:
             git(d, "fetch", "origin", "--quiet")
         base_ref = ref(d, base)
@@ -111,7 +111,7 @@ def cmd_notes(ws: Workspace, args: list[str]) -> int:
             names.append(a)
     repos = targets(ws, names[0] if names else None)
     for r in repos:
-        d, base = ws.root / r, ws.base(r)
+        d, base = ws.repo_dir(r), ws.base(r)
         rel = to or (ws.repo_cfg(r).get("release") or [None])[0]
         if not rel:
             print(f"{r}: no release branch configured")

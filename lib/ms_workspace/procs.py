@@ -91,9 +91,8 @@ def procs_in_dir(directory: Path) -> list[tuple[int, str]]:
 def label_for(ws: Workspace | None, cwd: str) -> str:
     if not cwd or ws is None:
         return cwd
-    try:
-        rel = Path(cwd).relative_to(ws.root).parts
-    except ValueError:
+    rel = ws.rel_parts(cwd)
+    if rel is None:
         return cwd
     if rel[:1] == (".batches",) and len(rel) >= 3:
         return f"batch {rel[1]}/{rel[2] if rel[2] != '.agents' else rel[-1]}"

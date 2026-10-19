@@ -102,7 +102,7 @@ def run_e2e(ws: Workspace, batch: str) -> int:
         print("no [e2e] command configured", file=sys.stderr)
         return 2
     erepo = ws.get("e2e", "repo", default="")
-    directory = ws.root / erepo if erepo else ws.root
+    directory = ws.repo_dir(erepo) if erepo else ws.root
     if batch and erepo and (ws.batch_dir / batch / erepo).is_dir():
         directory = ws.batch_dir / batch / erepo
     start = time.time()
@@ -141,7 +141,8 @@ def cmd_test(ws: Workspace, args: list[str]) -> int:
     arg = args[1] if len(args) > 1 else ""
     if level == "t0":
         top = toplevel()
-        return run_tests(ws, top.name, top, "t0")
+        name = next((r for r in ws.repo_names() if ws.repo_dir(r).resolve() == top.resolve()), top.name)  # a repo may live at `path`
+        return run_tests(ws, name, top, "t0")
     if level == "t1":
         return test_t1(ws, need_batch(ws, arg or batch_of_cwd(ws)))
     if level == "t2":

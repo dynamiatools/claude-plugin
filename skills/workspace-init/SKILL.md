@@ -1,82 +1,70 @@
 ---
 name: workspace-init
-description: Creates (or updates) a multi-repo workspace from scratch. Asks which repos to include, clones the missing ones, detects each repo's stack and base branch, asks for dependencies, e2e and release branches, then writes workspace.toml and a short workspace-level CLAUDE.md. Use when the user wants to set up a new workspace, add a repo to an existing one, or bootstrap a new machine with its repos.
+description: Creates (or updates) a workspace in a .dynamia/ folder. Inside a git repo it makes a one-repo workspace and excludes .dynamia/ locally; elsewhere it asks which repos to include, clones the missing ones, detects each stack and base branch, asks for dependencies, e2e and release branches. It writes workspace.toml and respects an existing CLAUDE.md, asking before adding the workspace block. Use when the user wants to set up a new workspace, add a repo to an existing one, bootstrap a new machine, or move an older workspace into .dynamia/.
 ---
 
 # dynamia:workspace-init
 
-Builds a **workspace**: a folder with several related git repos plus a
-`workspace.toml` that the rest of the `ms-*` workflow reads (batches,
-integration, shipping). It works from zero: no folder, no repos, no config.
+Builds a **workspace**: a `.dynamia/` folder with a `workspace.toml` that the rest of the workflow reads (batches, integration, shipping), for the repo you are in or for several related repos. It works from zero: no folder, no repos, no config.
 
 Token rule: do the mechanical work with the bundled script, ask the user only
 what cannot be detected, and keep every question short.
 
+## Layout
+
+```
+<project>/
+├── CLAUDE.md                 only this stays in the project folder
+└── .dynamia/
+    ├── workspace.toml        the config
+    └── workspace/            clones (multi-repo), .batches/, .ms-workspace/ (logs, memory, images), requests/, mocks/
+```
+
+`<project>` is either the repo you are standing in (one-repo workspace) or a new folder (multi-repo workspace). Older workspaces keep `workspace.toml` and the clones in one folder; they still work, and `ms-workspace migrate` moves them.
+
 ## Steps
 
-1. **Check for an existing workspace.** If the user gave a folder (or the cwd
-   contains `workspace.toml`), read it and switch to *update mode*: only add or
-   change what the user asks for. Otherwise continue to *new workspace*.
+1. **Detect where we are.** Run `ms-workspace project` (JSON: `in_repo`, `project`, `workspace` = `new` / `old` / `none`, `claude_md.exists|managed`, `excluded`).
+   - `workspace` is `new`: *update mode*. Read `<project>/.dynamia/workspace.toml` and change only what the user asks.
+   - `workspace` is `old`: update mode on the old file, then offer `ms-workspace migrate` (dry run first; it refuses while batches are open).
+   - `none` and `in_repo` is true: **one-repo workspace** (step 2a).
+   - `none` and `in_repo` is false: **multi-repo workspace** (step 2b).
 
-2. **Ask for the basics** in a single `AskUserQuestion` round when possible:
-   - Workspace name and root folder (suggest `~/IdeaProjects/<name>` if unsure;
-     create it if missing).
-   - Which repos: GitHub `org/repo`, full URLs, or names of repos that already
-     exist inside the root. Accept a free-text list.
-   - Task tracking: `local` (a `TASKS.md` per batch, cheapest) or `github`
-     (issues). Recommend `local`; see Notes.
+2a. **One-repo workspace.** The project is the repo's top-level folder. Ask only: workspace name (default: the folder name), base branch (suggest from `detect-repo.sh`), task tracking (`local` recommended; see Notes). Then:
+   - Run `ms-workspace exclude`: it adds `.dynamia/` to the repo's `.git/info/exclude` (local, nothing tracked, shared by every worktree). Tell the user it is local to this clone and that a new clone needs the same command.
+   - Write `.dynamia/workspace.toml` with one repo entry using `path = "."` (the repo is the project folder itself).
+   - Skip steps 3 and 5's dependency questions.
 
-3. **Clone what is missing** into the root, one directory per repo:
+2b. **Multi-repo workspace.** Ask in one `AskUserQuestion` round: workspace name and project folder (suggest `~/IdeaProjects/<name>`, create it if missing), which repos (GitHub `org/repo`, full URLs, or names of repos already present; free text), task tracking. Clone what is missing into `<project>/.dynamia/workspace/<repo>`; confirm first if there are more than 3 repos or credentials are needed, report failures verbatim and continue.
+
+3. **Detect each repo** with the bundled script (one JSON per repo, tiny output):
    ```bash
-   git clone <url> "<root>/<repo>"
+   bash "${CLAUDE_PLUGIN_ROOT}/skills/workspace-init/scripts/detect-repo.sh" "<repo folder>"
    ```
-   Confirm with the user before cloning if there are more than 3 repos or
-   the clone needs credentials. Report failures verbatim and continue with the
-   rest.
+   It returns the remote URL, default branch, suggested base branch (`next` if it exists), stacks (maven, gradle, pnpm, npm, yarn, go, python, rust) and a suggested test command.
 
-4. **Detect each repo** with the bundled script (one JSON per repo, tiny output):
-   ```bash
-   bash ~/.claude/skills/workspace-init/scripts/detect-repo.sh "<root>/<repo>"
-   ```
-   It returns the remote URL, default branch, suggested base branch (`next` if
-   it exists), stacks (maven, gradle, pnpm, npm, yarn, go, python, rust) and a
-   suggested test command.
-
-5. **Show one compact table** (repo, base, stacks, test command) and ask only
-   what is still unknown. Group these into as few questions as possible:
+4. **Show one compact table** (repo, base, stacks, test command) and ask only what is still unknown, in as few questions as possible:
    - Base branch per repo, only if the suggestion looks wrong.
-   - **Dependencies** between repos (which repo consumes which). Offer the
-     repo names as options. Hint: shared SNAPSHOT versions in a `pom.xml`, or
-     workspace/`file:` dependencies in `package.json`, usually reveal them.
+   - **Dependencies** between repos (multi-repo only). Hint: shared SNAPSHOT versions in a `pom.xml`, or workspace/`file:` dependencies in `package.json`, usually reveal them.
    - **Release branches** per repo (e.g. `qa`, `main`), or none.
    - **e2e**: the command and the repo that owns it, or "none yet".
    - Whether the base branch accepts direct push (default: yes).
-   - Optional, only if the user brings them up: `env = ["NAME=value"]` per repo (variables for its test, e2e and setup commands; never secrets) and `[ide]` (`default`, `code`, `idea`) for `ms-workspace open`. Both are documented in the example file.
+   - Optional, only if the user brings them up: `env = ["NAME=value"]` per repo (never secrets) and `[ide]` (`default`, `code`, `idea`).
 
-6. **Write `<root>/workspace.toml`** following
-   `~/.claude/skills/workspace-init/references/workspace.example.toml`.
-   - Do not write a `root` key: the workspace root is simply the folder that holds `workspace.toml`, so the file works on any machine.
-   - For stacks with module-level selection, set `test.affected` (Maven:
-     `-pl {modules} -amd`; pnpm: `pnpm --filter "...[origin/<base>]" test`).
-     Otherwise reuse the full test command.
-   - Never invent dependencies or e2e commands; leave `deps: []` / omit `e2e`
-     if the user does not know.
+5. **Write `<project>/.dynamia/workspace.toml`** following `${CLAUDE_PLUGIN_ROOT}/skills/workspace-init/references/workspace.example.toml`.
+   - Do not write a `root` key: the workspace is located by the `.dynamia/` folder, so the file works on any machine.
+   - For stacks with module-level selection, set `test.affected` (Maven: `-pl {modules} -amd`; pnpm: `pnpm --filter "...[origin/<base>]" test`). Otherwise reuse the full test command.
+   - Never invent dependencies or e2e commands; leave `deps: []` / omit `e2e` if the user does not know.
+   - Create `.dynamia/workspace/` if it does not exist yet.
 
-7. **Generate `<root>/CLAUDE.md`** with the tool instead of writing it by hand:
-   ```bash
-   MS_WORKSPACE="<root>" ms-workspace claude-md
-   ```
-   It writes a short managed block (repos in dependency order, agent rules,
-   batch flow, token and tool guidance, tracking mode) between
-   `ms-workspace:begin/end` markers. Anything the user writes outside the
-   markers is preserved, and the command can be re-run after any change to
-   `workspace.toml`. Claude Code loads this file automatically from any repo
-   below the workspace root.
+6. **CLAUDE.md, respecting what is there.** Look at `claude_md` from step 1:
+   - It does not exist: run `ms-workspace claude-md` from the project folder; it writes a short managed block (repos, agent rules, batch flow, token and tool guidance) between `ms-workspace:begin/end` markers.
+   - It exists and is the repo's own (`managed` is false): **do not touch it.** Ask with `AskUserQuestion`: "This repo already has a CLAUDE.md. Optimize it by adding the workspace block at the end?" Offer: add the block (recommended; show `ms-workspace claude-md --print` first if the user wants to see it), or leave the file as it is. Only on yes run `ms-workspace claude-md --append`. Everything the user wrote stays.
+   - It exists with the managed block: `ms-workspace claude-md` refreshes only the block, no question needed.
 
-8. **No `.gitignore` changes are needed**: batches (`.batches/`) and state (`.ms-workspace/`: logs, memory, archived images) live in the workspace root, outside every repo. Mention that the archived images can contain sensitive data.
+7. **Ignore.** One-repo: step 2a already excluded `.dynamia/`. Multi-repo: the project folder is not a repo, nothing to ignore. Mention that archived images under `.dynamia/workspace/.ms-workspace/images/` can contain sensitive data.
 
-9. **Report**: path of `workspace.toml`, the dependency order, what was
-   cloned, and what was left blank (so the user knows what to fill in later).
+8. **Report**: path of `workspace.toml`, the dependency order, what was cloned, whether CLAUDE.md was created, extended or left alone, and what was left blank.
 
 ## Notes
 
