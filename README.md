@@ -1,17 +1,27 @@
 # dynamia
 
-A [Claude Code](https://claude.com/claude-code) plugin for safe, token-cheap work across several repos: 18 skills, 4 helper agents, guard hooks and a small tool (`ms-workspace`) that does the git, test and bookkeeping work so the model does not. Install it with two commands.
+**The way we work with Claude Code at [Dynamia](https://dynamiasoluciones.com), packaged as a plugin you can install in two commands.**
+
+AI coding gets expensive and risky when the model does the boring parts: juggling git across repos, re-running tests, re-reading the same files. These are the habits we settled on after a lot of real use, and they are free for you to use under MIT:
+
+- **Let the tool do the plumbing.** `ms-workspace` handles git, tests and bookkeeping, so the model spends tokens on thinking, not on `git status`.
+- **Work in batches, not in a mess.** Every task gets its own copy of the repos, so nothing half-done leaks into your main checkout.
+- **Guard the dangerous stuff.** Hooks block secrets, destructive commands and runaway output before they happen.
+- **Spend tokens on purpose.** Cheap helper agents search and summarize; a token audit shows where your plan went.
+- **Humans publish.** Agents commit locally; you decide what ships.
+
+What you get: 19 skills, 4 helper agents, guard hooks, a small stdlib-only Python tool and a panel for development env vars.
 
 ## Install
 
 In Claude Code:
 
 ```
-/plugin marketplace add <owner>/<repo>               # or a git URL, or a local path such as ~/IdeaProjects/my-claude
+/plugin marketplace add dynamiatools/claude-plugin
 /plugin install dynamia@dynamia
 ```
 
-`dynamia@dynamia` is `<plugin>@<marketplace>`: this repo is both the plugin and its own one-plugin marketplace, and both are named `dynamia`. A private repo works with the git credentials the machine already has (SSH key without passphrase, or `gh auth login` then `gh auth setup-git`). Third-party marketplaces do not auto-update by default: turn it on in `/plugin` > Marketplaces, or run `/plugin update dynamia`.
+`dynamia@dynamia` is `<plugin>@<marketplace>`: this repo is both the plugin and its own one-plugin marketplace, and both are named `dynamia`. Third-party marketplaces do not auto-update by default: turn it on in `/plugin` > Marketplaces, or run `/plugin update dynamia`.
 
 The plugin provides the skills (`/dynamia:<skill>`), the agents (`dynamia:<agent>`), the hooks and `ms-workspace` on the Bash tool's PATH. Claude Code does not let a plugin set the status line, permissions or `~/.claude/CLAUDE.md`, or put tools in your shell PATH, so one skill finishes the job. In a **new** Claude Code session run:
 
@@ -28,7 +38,7 @@ Run it again after every `/plugin update`: those three point into the plugin fol
 
 To remove: `/dynamia:setup --remove` (undoes the three), then `/plugin uninstall dynamia@dynamia`.
 
-`/plugin` does not run inside a Remote Control session; from a terminal use `claude plugin marketplace add <owner>/<repo>` and `claude plugin install dynamia@dynamia`.
+`/plugin` does not run inside a Remote Control session; from a terminal use `claude plugin marketplace add dynamiatools/claude-plugin` and `claude plugin install dynamia@dynamia`.
 
 `install.sh` (needs a clone) does the same linking without the skill, for use without the plugin or on a machine where you prefer a script:
 - It is idempotent and uses symlinks, so this repo stays the single source of truth.
@@ -284,3 +294,7 @@ python3 -m unittest tests.test_ms_workspace.TestShip -v
 - [ ] Exact integration plan across agents (merge-tree chain) instead of per-branch `--dry-run`
 - [ ] `clean` recognising squash-merged PRs in `pr` mode
 - [ ] Import the remaining personal skills and agents from `~/.claude`
+
+## License
+
+[MIT](LICENSE), Copyright (c) 2026 Dynamia Soluciones. Use it, fork it, make it yours; a star or a pull request is always welcome.
