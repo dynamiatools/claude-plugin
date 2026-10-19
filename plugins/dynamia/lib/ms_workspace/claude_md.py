@@ -46,6 +46,7 @@ def render(ws: Workspace) -> str:
             "- Commit locally. Never `git push`, `gh pr create|merge` or `ms-workspace clean|undo` by hand: a hook blocks them. "
             "Publishing goes through `/dynamia:ship` (plan, confirmation, `ms-workspace ship`), and only when the user asks: "
             "\"open a PR\" means `ship --pr`; \"ship\" or \"publish\" uses each repo's configured push mode. If the plan says RECOMMEND A PR, tell the user and let them choose.",
+            "- Missing dependencies: run `ms-workspace env <batch> --setup` (the repo's own `setup` command; Claude Code asks the user to approve it). If the repo has none, use its normal install command (npm/pnpm/mvn/gradle) in the worktree. Only `env --trust` is left to the user.",
             "- After changes run `ms-workspace test t0` (tests only what changed). Fix failures before saying you are done.",
             "- Never create worktrees by hand; use `ms-workspace batch new` / `agent new`. /dynamia:batch recommends a worktree or a plain local branch in the repo and asks the user to choose "
             "(worktree recommended when the repo is not on its base branch or the task is new; a plain branch only for a small, single-repo task on a clean checkout).",
