@@ -21,7 +21,7 @@ The plugin provides the skills (`/dynamia:<skill>`), the agents (`dynamia:<agent
 
 It shows a preview, asks, makes a backup and then:
 - adds the status line (`ms-statusline`) and the permission rules to `~/.claude/settings.json`, and removes an older copy of the hooks so they do not run twice;
-- adds the repo's global instructions to `~/.claude/CLAUDE.md` as a block between `dynamia:begin/end` markers (your own content in that file stays; a link to the repo file is replaced, never written through);
+- copies the global instructions to `~/.claude/DYNAMIA.md` and adds one `@DYNAMIA.md` import line to `~/.claude/CLAUDE.md`, between `dynamia:begin/end` markers (your own content in that file stays; a link to the repo file is replaced, never written through);
 - links `ms-workspace` and `ms-statusline` into `~/.local/bin` (add it to your `PATH` if the report says so).
 
 Run it again after every `/plugin update`: those three point into the plugin folder, which holds the version. Check with `ms-workspace doctor`. Nothing needs a clone of the repo or `install.sh`.
