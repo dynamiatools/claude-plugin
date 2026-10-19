@@ -14,13 +14,14 @@ what cannot be detected, and keep every question short.
 
 ```
 <project>/
-├── CLAUDE.md                 only this stays in the project folder
+├── CLAUDE.md
+├── api/  web/  ...           the repos (multi-repo workspace), in the project folder
 └── .dynamia/
     ├── workspace.toml        the config
-    └── workspace/            clones (multi-repo), .batches/, .ms-workspace/ (logs, memory, images), requests/, mocks/
+    └── workspace/            batches (.batches/), .ms-workspace/ (logs, memory, images), requests/, mocks/; never the repos
 ```
 
-`<project>` is either the repo you are standing in (one-repo workspace) or a new folder (multi-repo workspace). Older workspaces keep `workspace.toml` and the clones in one folder; they still work, and `ms-workspace migrate` moves them.
+`<project>` is either the repo you are standing in (one-repo workspace) or a new folder (multi-repo workspace). Older workspaces keep `workspace.toml` and everything in one folder, and 0.4/0.5.0 put the clones inside `.dynamia/workspace/`; both still work, and `ms-workspace migrate` moves what needs moving.
 
 ## Steps
 
@@ -35,7 +36,7 @@ what cannot be detected, and keep every question short.
    - Write `.dynamia/workspace.toml` with one repo entry using `path = "."` (the repo is the project folder itself).
    - Skip steps 3 and 5's dependency questions.
 
-2b. **Multi-repo workspace.** Ask in one `AskUserQuestion` round: workspace name and project folder (suggest `~/IdeaProjects/<name>`, create it if missing), which repos (GitHub `org/repo`, full URLs, or names of repos already present; free text), task tracking. Clone what is missing into `<project>/.dynamia/workspace/<repo>`; confirm first if there are more than 3 repos or credentials are needed, report failures verbatim and continue.
+2b. **Multi-repo workspace.** Ask in one `AskUserQuestion` round: workspace name and project folder (suggest `~/IdeaProjects/<name>`, create it if missing), which repos (GitHub `org/repo`, full URLs, or names of repos already present; free text), task tracking. Clone what is missing into `<project>/<repo>` (never inside `.dynamia/`); confirm first if there are more than 3 repos or credentials are needed, report failures verbatim and continue.
 
 3. **Detect each repo** with the bundled script (one JSON per repo, tiny output):
    ```bash

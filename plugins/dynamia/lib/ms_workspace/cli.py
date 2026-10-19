@@ -37,7 +37,7 @@ Usage:
   ms-workspace dev-env [list|add NAME=value|rm NAME] [--repo R]   development variables in workspace.toml, applied to test/e2e/setup commands
   ms-workspace project [dir]                 JSON: inside a git repo? workspace layout? CLAUDE.md the repo's own?
   ms-workspace exclude [dir]                 add .dynamia/ to the repo's .git/info/exclude (local, nothing tracked)
-  ms-workspace migrate [--yes]               move an older-layout workspace into .dynamia/ (dry run without --yes)
+  ms-workspace migrate [--yes]               move an older layout into .dynamia/, or clones left inside .dynamia/workspace/ out to the project (dry run without --yes)
   ms-workspace setup-hooks [--dry-run] [--remove] [--project]   merge the ms-* hooks and status line into settings.json
   ms-workspace budget [--top N] [--json]     what every session loads before you type (CLAUDE.md, skills, agents, memory), in tokens
   ms-workspace readguard / outguard          token-saving hooks: warn on re-reading an unchanged file; shorten huge Bash output

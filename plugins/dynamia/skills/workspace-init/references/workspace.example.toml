@@ -1,5 +1,5 @@
 # workspace.toml - read by ms-workspace and the ms-* skills.
-# This file lives in <project>/.dynamia/workspace.toml; clones, batches and state live in <project>/.dynamia/workspace/.
+# This file lives in <project>/.dynamia/workspace.toml; batches and state live in <project>/.dynamia/workspace/; the clones live in <project>/<repo>.
 # A repo that is the project folder itself (one-repo workspace) sets `path = "."` (relative to <project>).
 name = "example"
 tasks = "local"              # "local" (TASKS.md per batch) or "github" (one issue per batch)

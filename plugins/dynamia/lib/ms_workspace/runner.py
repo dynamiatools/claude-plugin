@@ -102,7 +102,7 @@ def run_e2e(ws: Workspace, batch: str) -> int:
         print("no [e2e] command configured", file=sys.stderr)
         return 2
     erepo = ws.get("e2e", "repo", default="")
-    directory = ws.repo_dir(erepo) if erepo else ws.root
+    directory = ws.repo_dir(erepo) if erepo else ws.project
     if batch and erepo and (ws.batch_dir / batch / erepo).is_dir():
         directory = ws.batch_dir / batch / erepo
     start = time.time()

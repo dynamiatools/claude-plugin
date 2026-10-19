@@ -88,9 +88,14 @@ class Workspace:
         return default if node is None else node
 
     def repo_dir(self, repo: str) -> Path:
-        """Where a repo's clone is: its `path` (relative to the project folder; "." for a workspace inside the repo) or <root>/<repo>."""
+        """Where a repo's clone is: its `path` (relative to the project folder; "." for a workspace inside the repo) or <project>/<repo>."""
         path = self.repo_cfg(repo).get("path")
-        return (self.project / path).resolve() if path else self.root / repo
+        if path:
+            return (self.project / path).resolve()
+        inside = self.root / repo  # 0.4 / 0.5.0 put the clones in .dynamia/workspace/; keep them working until `migrate`
+        if self.root != self.project and not (self.project / repo / ".git").exists() and (inside / ".git").exists():
+            return inside
+        return self.project / repo
 
     def contains(self, cwd: str) -> bool:
         return cwd == str(self.project) or cwd.startswith(str(self.project) + "/")

@@ -222,17 +222,18 @@ A workspace lives in a `.dynamia/` folder inside your project; the project folde
 ```
 <project>/
 ├── CLAUDE.md
+├── api/  web/  ...         the repos (multi-repo workspace), in the project folder
 └── .dynamia/
     ├── workspace.toml      config (see skills/workspace-init/references/workspace.example.toml for every key)
-    └── workspace/          clones (multi-repo), .batches/, .ms-workspace/ (logs, memory, images), requests/, mocks/
+    └── workspace/          batches (.batches/), .ms-workspace/ (logs, memory, images), requests/, mocks/; never the repos
 ```
 
 `/dynamia:workspace-init` first checks where you are (`ms-workspace project`):
 - **Inside a git repo**: a one-repo workspace. The repo is the project folder (`path = "."` in `workspace.toml`), and `.dynamia/` is added to the repo's `.git/info/exclude` (`ms-workspace exclude`): local to this clone, nothing tracked, and shared by every worktree, so the repo and its batch worktrees stay clean in `git status`. A new clone needs `ms-workspace exclude` once.
-- **Outside a repo**: a multi-repo workspace; the clones go to `.dynamia/workspace/<repo>`.
+- **Outside a repo**: a multi-repo workspace; the clones go to `<project>/<repo>`, next to `.dynamia/`, which only keeps the config and what the tool generates.
 - **The repo's own `CLAUDE.md` is respected**: it is never edited unasked. The skill asks whether to add the workspace block at the end (`ms-workspace claude-md --append`); with a block already there, only the block is refreshed.
 
-Older workspaces (`workspace.toml` and clones in one folder) keep working; `ms-workspace migrate` shows the move and `migrate --yes` applies it (it refuses while batches are open, because worktrees store absolute paths).
+Older workspaces (`workspace.toml` and everything in one folder) and the clones that 0.4/0.5.0 left inside `.dynamia/workspace/` keep working; `ms-workspace migrate` shows the move and `migrate --yes` applies it (it refuses while batches are open, because worktrees store absolute paths).
 
 Things to know in a one-repo workspace: `git clean -fdx` in the repo also deletes ignored files, so it would wipe `.dynamia/` (plain `-fd` is safe); and tools that scan the whole tree without reading `.git/info/exclude` (pytest, jest, an IDE indexer) can see the batch copies under `.dynamia/workspace/.batches/`, so exclude that folder there.
 
