@@ -50,7 +50,7 @@ forbid = ["sources/modulos/*/core"]
 allow_same_group = true      # a dependency between siblings of the same parent folder is fine
 
 [tools]                      # rendered into the workspace CLAUDE.md "Tool preference" section
-discovery = ["idea", "codebase-memory", "grep"]   # ordered; "mcp:<server>" adds any MCP server
+discovery = ["idea", "codebase-memory", "grep"]   # optional; without it only installed tools are listed (codebase-memory if its binary is on PATH, then grep). Ordered; "mcp:<server>" adds any MCP server
 shell = "rtk"                # "rtk" adds the rtk note, anything else omits it
 # notes = "Free text appended to the section."
 

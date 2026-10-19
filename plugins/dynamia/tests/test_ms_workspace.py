@@ -908,10 +908,32 @@ class TestClaudeMd(Base):
         self.assertIn("Small diffs.", text)
         self.assertIn("- app: github", text)
 
-    def test_default_tools_policy(self):
-        text = self.ws.ms("claude-md", "--print").stdout
-        self.assertIn("2. codebase-memory graph tools", text)
-        self.assertIn("rtk", text)
+    def test_default_tools_policy_lists_only_what_is_installed(self):
+        bare = tempfile.mkdtemp()
+        text = self.ws.ms_py("claude-md", "--print", env={"PATH": bare}).stdout
+        self.assertIn("1. Grep/Glob/Read", text)
+        self.assertNotIn("codebase-memory", text)
+        self.assertNotIn("IDE tools", text)
+        binary = Path(bare) / "codebase-memory-mcp"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        text = self.ws.ms_py("claude-md", "--print", env={"PATH": bare}).stdout
+        self.assertIn("1. codebase-memory graph tools", text)
+        self.assertIn("2. Grep/Glob/Read", text)
+
+    def test_refresh_rewrites_only_a_fully_generated_file(self):
+        p = self.ws.root / "CLAUDE.md"
+        self.assertIn("left untouched", self.ws.ms("claude-md", "--refresh").stdout)
+        self.assertFalse(p.exists(), "refresh never creates the file")
+        self.ws.ms("claude-md")
+        self.ws.set_toml(DEFAULT_TOML.replace('name = "t"', 'name = "renamed"'))
+        self.assertIn("Refreshed", self.ws.ms("claude-md", "--refresh").stdout)
+        self.assertIn("# Workspace: renamed", p.read_text())
+        mine = "# Mine\n\n" + p.read_text()
+        p.write_text(mine)
+        self.ws.set_toml(DEFAULT_TOML)
+        self.assertIn("left untouched", self.ws.ms("claude-md", "--refresh").stdout)
+        self.assertEqual(p.read_text(), mine)
 
 
 # ---------------------------------------------------------------------- usage
