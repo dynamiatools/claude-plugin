@@ -117,7 +117,7 @@ def remove(settings: dict, src: dict) -> list[str]:
             del settings["hooks"][event]
     if not settings.get("hooks"):
         settings.pop("hooks", None)
-    if src.get("statusLine") and (settings.get("statusLine") or {}).get("command") == src["statusLine"]["command"]:
+    if src.get("statusLine") and (settings.get("statusLine") or {}).get("command", "").strip('"').endswith(src["statusLine"]["command"]):
         del settings["statusLine"]
         report.append("removed  statusLine")
     perms = settings.get("permissions", {})
@@ -131,6 +131,87 @@ def remove(settings: dict, src: dict) -> list[str]:
             del perms[kind]
     if "permissions" in settings and not settings["permissions"]:
         del settings["permissions"]
+    return report
+
+
+MD_BEGIN = "<!-- dynamia:begin (managed by /dynamia:setup; edit outside this block) -->"
+MD_END = "<!-- dynamia:end -->"
+BIN_NAMES = ("ms-workspace", "ms-statusline")
+
+
+def claude_home() -> Path:
+    return settings_path().parent
+
+
+def bin_dir() -> Path:
+    return Path(os.environ.get("BIN_DIR") or Path(os.environ.get("HOME", "~")).expanduser() / ".local" / "bin")
+
+
+def _backup(path: Path, report: list[str]) -> None:
+    backup = path.with_name(f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.copy2(path, backup)
+    report.append(f"backup   {backup}")
+
+
+def global_md(root: Path, dry: bool, undo: bool) -> list[str]:
+    """Put the repo's global instructions in ~/.claude/CLAUDE.md as a marked block; the rest of the file is yours."""
+    target, report = claude_home() / "CLAUDE.md", []
+    block = f"{MD_BEGIN}\n{(root / 'CLAUDE.md').read_text().rstrip()}\n{MD_END}\n"
+    linked = target.is_symlink()  # install.sh linked it to the repo file: never write through it
+    text = target.read_text() if target.exists() else ""
+    a, b = text.find(MD_BEGIN), text.find(MD_END)
+    if (a == -1) != (b == -1) or b < a:
+        die(f"{target} has a dynamia block start without an end marker (or the reverse); fix it by hand")
+    if linked and text == (root / "CLAUDE.md").read_text():
+        text, a, b = "", -1, -1  # a copy of our own file: the block replaces it
+    if undo:
+        if a == -1:
+            return ["present  no dynamia block in CLAUDE.md (nothing to remove)"]
+        new = (text[:a] + text[b + len(MD_END):].lstrip("\n")).rstrip() + "\n"
+        report.append("removed  dynamia block from CLAUDE.md")
+    elif a != -1:
+        if text[a:b + len(MD_END)] + "\n" == block or text[a:b + len(MD_END)] == block.rstrip("\n"):
+            return ["present  dynamia block in CLAUDE.md"]
+        new = text[:a] + block.rstrip("\n") + text[b + len(MD_END):]
+        report.append("updated  dynamia block in CLAUDE.md")
+    else:
+        new = text + ("" if not text or text.endswith("\n") else "\n") + ("\n" if text else "") + block
+        report.append("added    dynamia block in CLAUDE.md" + (" (your content kept above it)" if text else ""))
+    if not dry:
+        if target.exists() or linked:
+            if linked:
+                target.unlink()
+            else:
+                _backup(target, report)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(new)
+    return report
+
+
+def global_bin(root: Path, dry: bool, undo: bool) -> list[str]:
+    """Link ms-workspace and ms-statusline into ~/.local/bin; replace only links that already point to some plugin or repo bin/."""
+    report, dest = [], bin_dir()
+    for name in BIN_NAMES:
+        src, dst = root / "bin" / name, dest / name
+        ours = dst.is_symlink() and os.readlink(dst).endswith(f"/bin/{name}")
+        if undo:
+            if ours:
+                report.append(f"removed  link {dst}")
+                if not dry:
+                    dst.unlink()
+        elif ours and os.readlink(dst) == str(src):
+            report.append(f"present  link {dst}")
+        elif ours or not dst.exists() and not dst.is_symlink():
+            report.append(f"{'updated' if ours else 'added  '}  link {dst} -> {src}")
+            if not dry:
+                dest.mkdir(parents=True, exist_ok=True)
+                if ours:
+                    dst.unlink()
+                dst.symlink_to(src)
+        else:
+            report.append(f"kept     {dst} already exists and is not a link to this tool")
+    if not undo and str(dest) not in os.environ.get("PATH", "").split(":"):
+        report.append(f"note     {dest} is not in PATH; add it to your shell profile")
     return report
 
 
@@ -167,6 +248,13 @@ def cmd_setup_hooks(args: list[str]) -> int:
     print(f"{'(dry run) ' if dry else ''}{'Removing from' if undo else 'Merging into'} {target}")
     for line in report or ["nothing to do"]:
         print("  " + line)
+    if "--global" in args:
+        if project:
+            die("--global works on your user-level files; drop --project")
+        root = Path(args[args.index("--plugin-root") + 1]) if "--plugin-root" in args else SOURCE.parents[1]
+        print(f"{'(dry run) ' if dry else ''}{'Removing' if undo else 'Setting up'} global files in {claude_home()} and {bin_dir()}")
+        for line in global_md(root, dry, undo) + global_bin(root, dry, undo):
+            print("  " + line)
     if not undo and "--plugin-root" not in args and shutil.which("ms-workspace") is None:
         print("  warning: ms-workspace is not in PATH, so the hooks would fail; run ./install.sh first")
     if changed and not dry:
