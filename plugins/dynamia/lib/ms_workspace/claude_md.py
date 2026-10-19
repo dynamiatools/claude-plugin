@@ -82,7 +82,11 @@ def render(ws: Workspace) -> str:
     out += ["", "## Tasks",
             f"Tracking mode: `{tasks}` (`local` = TASKS.md inside each batch; `github` = GitHub issues, "
             "one tracking issue per batch; `ask` = ask the user where to keep the tasks and confirm before creating any local task file). "
-            "A repo can override it with `tasks` in workspace.toml."]
+            "A repo can override it with `tasks` in workspace.toml.",
+            "If the DynamiaTasks MCP (`mcp__dynamia-tasks__*` tools, from dynamiatools/dynamia-tasks, still in development) is available, "
+            "use it to read and update tasks instead of editing TASKS.md or calling `gh` by hand: it manages the local tasks "
+            "(`.dynamia/tasks`: backlog.json, comments.json, workspace.json) and can add a task to the workspace through a connector (local or GitHub issues). "
+            "Without it, nothing changes."]
     overrides = [f"- {r}: {ws.repo_cfg(r)['tasks']}" for r in ws.repo_names()
                  if ws.repo_cfg(r).get("tasks") not in (None, tasks)]
     if overrides:
