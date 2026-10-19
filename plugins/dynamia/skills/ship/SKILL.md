@@ -1,7 +1,7 @@
 ---
 name: ship
 description: Publishes a validated batch to each repo's base branch (direct push or PR, per workspace.toml) after syncing with the remote, re-running the incremental tests and the end-to-end command. Use when the user explicitly asks to ship, publish or push a batch, or to open a pull request (PR) for it; "open a PR" means ship with --pr. Never on your own initiative.
-argument-hint: "<batch-name> [--pr]"
+argument-hint: "<batch-name> [--pr|--direct]"
 allowed-tools: Bash(ms-workspace usage:*) Bash(ms-workspace plan:*)
 ---
 
@@ -14,6 +14,7 @@ It works from the workspace root or from inside the batch worktree. In a batch w
 **What the user's words mean**
 - "open a PR", "abre un PR", "crea el pull request" -> `--pr`: every repo gets `int/<batch>` pushed and a PR to its base branch, whatever its `push` setting.
 - "ship", "publish", "push it", "sube esto" -> no `--pr`: each repo uses its configured `push` mode (`direct` pushes to the base branch, `pr` opens a PR).
+- If a repo has `push = "ask"`, always ask (PR or direct push) before step 2 and pass the answer as `--pr` or `--direct`; `plan` and `ship` refuse to run without one.
 - If it is unclear whether they want a PR or a direct push, ask before step 2: a direct push cannot be undone with a close button.
 - An explicit request for a PR is enough: go straight to the plan with `--pr`, without asking whether they would rather push directly.
 - "We are done for today" or any plain request to publish is **not** a request for a PR: use the configured mode.

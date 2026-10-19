@@ -71,7 +71,8 @@ def render(ws: Workspace) -> str:
         out.append(ws.get("tools", "notes"))
     out += ["", "## Tasks",
             f"Tracking mode: `{tasks}` (`local` = TASKS.md inside each batch; `github` = GitHub issues, "
-            "one tracking issue per batch). A repo can override it with `tasks` in workspace.toml."]
+            "one tracking issue per batch; `ask` = ask the user where to keep the tasks and confirm before creating any local task file). "
+            "A repo can override it with `tasks` in workspace.toml."]
     overrides = [f"- {r}: {ws.repo_cfg(r)['tasks']}" for r in ws.repo_names()
                  if ws.repo_cfg(r).get("tasks") not in (None, tasks)]
     if overrides:

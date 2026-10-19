@@ -113,7 +113,7 @@ Everything stays local until `ship`. Agents commit locally and never push.
 | 4 | `integrate <batch> [--dry-run]` | Merges the agent branches into `int/<batch>` in dependency order and names conflicting files. `--dry-run` checks each branch against `int/<batch>` only, not against each other |
 | 5 | `test t1 <batch>` | Affected modules plus the repo's `critical` modules, for each changed repo |
 | 6 | `plan <batch>` | Shows what would be sent: per repo the target branch, push mode, commit subjects and a diffstat. Refuses while agent branches are not integrated |
-| 7 | `ship <batch> --yes [--pr]` | Merges a moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`, needs `gh`). `--pr` forces a PR for that run in every repo, whatever its `push` setting (`plan <batch> --pr` previews it); it is what "open a PR" means to `/dynamia:ship`. For a big change `plan`/`ship` print `RECOMMEND A PR` (defaults: 20 files, 800 lines or 10 new files, tunable in `[ship]`); it is advice only, the mode never changes by itself and the agent relays it and lets you choose. Never targets a `release` branch, never force-pushes |
+| 7 | `ship <batch> --yes [--pr|--direct]` | Merges a moved base branch, re-runs t1, runs the `[e2e]` command (or `--skip-e2e`), then pushes `int/<batch>` to the base branch (`push = "direct"`) or opens a PR (`push = "pr"`, needs `gh`). `--pr` forces a PR for that run in every repo, whatever its `push` setting (`plan <batch> --pr` previews it); it is what "open a PR" means to `/dynamia:ship`. `--direct` forces a direct push the same way. With `push = "ask"` a repo has no default: `plan`/`ship` refuse until the run says `--pr` or `--direct`, so the agent asks you first. For a big change `plan`/`ship` print `RECOMMEND A PR` (defaults: 20 files, 800 lines or 10 new files, tunable in `[ship]`); it is advice only, the mode never changes by itself and the agent relays it and lets you choose. Never targets a `release` branch, never force-pushes |
 | 8 | `undo <batch> [--yes]` | Reverts the last ship: every `ship --yes` records what each base branch pointed to before and after. `undo` shows the plan; with `--yes` it pushes one new commit per repo that restores the previous tree (history kept, never a force-push). If someone else pushed in the meantime it refuses for that repo and prints the exact `git revert` commands; in `pr` mode it prints how to close the PR. Works after `clean` too |
 | 9 | `clean [<batch>]` | Lists batches, or removes one whose branch is in its base branch **and** whose agent branches are all integrated; otherwise it refuses and names them (`--force` discards on purpose) |
 
@@ -239,7 +239,7 @@ Things to know in a one-repo workspace: `git clean -fdx` in the repo also delete
 
 ```toml
 name = "shop"
-tasks = "local"                     # or "github"; a repo can override it
+tasks = "local"                     # or "github" or "ask" (the agent asks where to keep them); a repo can override it
 [repos.framework]
 base = "next"
 [repos.framework.test]
@@ -266,7 +266,7 @@ ms-workspace dev-env add DEBUG=1 --repo erp                        # one repo
 ms-workspace dev-env list [--show|--json]  /  rm NAME [--repo R]   # names that look secret are shown as ***
 ```
 
-Three ways in: `/dynamia:dev-env` (Claude asks which variables and registers them), the `ms-workspace` commands above, and the **dev-env panel**, a mod of this plugin: `/env-panel` opens a pane (terminal and desktop, 110+ columns) with the current variables, fields for NAME and value, a repo picker and Add / remove buttons; `/env-panel NAME=value [repo]`, `/env-panel rm NAME [repo]` and `/env-panel list` work everywhere, including the mobile app, which has no input fields yet. The mod is `hooks/register.tsx` (named in `hooks/hooks.json` under `modules`, next to the command hooks); it only calls `ms-workspace dev-env`, which stays the single writer of the file.
+Three ways in: `/dynamia:dev-env` (Claude asks which variables and registers them), the `ms-workspace` commands above, and the **dev-env panel**, a mod of this plugin: `/dynamia-env-panel` opens a pane (terminal and desktop, 110+ columns) with the current variables, fields for NAME and value, a repo picker and Add / remove buttons; `/dynamia-env-panel NAME=value [repo]`, `/dynamia-env-panel rm NAME [repo]` and `/dynamia-env-panel list` work everywhere, including the mobile app, which has no input fields yet. The mod is `hooks/register.tsx` (named in `hooks/hooks.json` under `modules`, next to the command hooks); it only calls `ms-workspace dev-env`, which stays the single writer of the file. Two more panels from the same mod (`hooks/panels.tsx`): `/dynamia-logs-panel` shows the latest `ms-workspace log` actions with a Refresh button, and `/dynamia-memory-panel` browses the memory notes, adds one (type + text) and forgets one with ✕.
 
 ## Hooks
 

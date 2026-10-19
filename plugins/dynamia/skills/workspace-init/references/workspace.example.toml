@@ -2,7 +2,7 @@
 # This file lives in <project>/.dynamia/workspace.toml; batches and state live in <project>/.dynamia/workspace/; the clones live in <project>/<repo>.
 # A repo that is the project folder itself (one-repo workspace) sets `path = "."` (relative to <project>).
 name = "example"
-tasks = "local"              # "local" (TASKS.md per batch) or "github" (one issue per batch)
+tasks = "local"              # "local" (TASKS.md per batch), "github" (one issue per batch) or "ask" (the agent asks where to keep them)
 log_retention_days = 14      # daily action logs older than this are deleted
 images_retention_days = 30   # archived chat images older than this are deleted
 
@@ -61,7 +61,7 @@ release = []                 # branches that go to qa/production
 stacks = ["maven", "pnpm"]
 deps = []                    # repos this one depends on
 critical = []                # modules always tested in t1/t2 (money, security, ...)
-push = "direct"              # "direct" (push int/<batch> to base) or "pr" (open a PR)
+push = "direct"              # "direct" (push int/<batch> to base), "pr" (open a PR) or "ask" (the agent asks each time; ship needs --pr or --direct)
 # tasks = "github"           # overrides the workspace-wide tracking mode for this repo
 # env = ["SPRING_PROFILES_ACTIVE=test", "API_URL=http://localhost:8080"]   # NAME=value for this repo's test, e2e and setup commands (no secrets: this file is shared)
 # env_files = [".env.local"] # extra ignored files copied into every new worktree (plus .worktreeinclude)

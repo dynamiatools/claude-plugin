@@ -401,6 +401,15 @@ class TestShip(Base):
         self.assertEqual(self.ws.remote_log("lib")[0], "lib feature")
         self.assertEqual(self.ws.remote_log("app")[0], "app feature")
 
+    def test_push_ask_needs_an_explicit_choice(self):
+        self.ws.set_toml((DEFAULT_TOML + self.E2E).replace('[repos.lib]\nbase = "next"', '[repos.lib]\nbase = "next"\npush = "ask"'))
+        r = self.ws.ms("ship", "b1", "--yes")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--direct", r.stderr)
+        self.assertNotIn("lib feature", self.ws.remote_log("lib"))
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--direct"))
+        self.assertIn("lib feature", self.ws.remote_log("lib"))
+
     def test_missing_e2e_requires_explicit_skip(self):
         self.ws.set_toml(DEFAULT_TOML)
         r = self.ws.ms("ship", "b1", "--yes")

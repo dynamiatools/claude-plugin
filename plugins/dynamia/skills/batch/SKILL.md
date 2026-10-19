@@ -23,6 +23,7 @@ Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/workin
    ms-workspace batch new <batch> <repo> [<repo>...]
    ```
    Then write the task list into `<workspace>/working-trees/<batch>/TASKS.md` (short checkbox lines; if the repo tracks work in GitHub issues, put only issue numbers there).
+   If the tracking mode is `ask` (`tasks = "ask"`, see the Tasks block of the workspace CLAUDE.md), do not write the file yet: ask with `AskUserQuestion` where the tasks go (local `TASKS.md` or a GitHub issue) and remember the answer for the rest of the session. Also confirm before creating any other local task file later in the session.
 
 4. **Decide the agent layout.** Default to **one agent, no extra worktrees**: work directly in `working-trees/<batch>/<repo>`. Only when there are independent areas (different repos or modules that do not share files), create one worktree per agent:
    ```bash
