@@ -130,6 +130,6 @@ command -v claude >/dev/null 2>&1 && say "  ok       claude" || say "  MISSING  
 
 say ""
 if [[ $LEGACY -eq 1 ]]; then say "Done. Start a new Claude Code session to load the skills."
-else say "Done. Install the plugin with: /plugin marketplace add $REPO_DIR  then  /plugin install dynamia@dynamia"; fi
+else say "Done. Install the plugin with: /plugin marketplace add dynamiatools/claude-plugins  then  /plugin install dynamia@dynamia-tools"; fi
 [[ -d "$BACKUP_DIR" ]] && say "Replaced files were backed up in $BACKUP_DIR"
 exit 0

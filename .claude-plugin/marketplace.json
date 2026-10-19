@@ -1,11 +1,13 @@
 {
-  "name": "dynamia",
-  "owner": { "name": "Dynamia Soluciones" },
+  "name": "dynamia-tools",
+  "owner": {
+    "name": "Dynamia Soluciones"
+  },
   "plugins": [
     {
       "name": "dynamia",
-      "source": ".",
-      "description": "Multi-repo workspace tools for Claude Code."
+      "source": "./plugins/dynamia",
+      "description": "Multi-repo workspace tools for Claude Code: batches, guard hooks, token-cheap agents and a dev-env panel."
     }
   ]
 }
