@@ -64,7 +64,7 @@ def run_tests(ws: Workspace, repo: str, directory: Path, level: str, batch: str 
 
     memo_dir = ws.state_dir / "memo"
     memo_dir.mkdir(parents=True, exist_ok=True)
-    extra = ws.repo_env(repo)
+    extra = {**ws.dev_env(repo), **ws.repo_env(repo)}
     key = _memo_key(ws, repo, directory, batch, cmd + (f"\0{sorted(extra.items())}" if extra else ""))
     if not os.environ.get("MS_NO_MEMO") and (memo_dir / f"{repo}-{key}").exists():
         print(f"PASS {level} {repo} (cached: same code and command already passed): {cmd}")

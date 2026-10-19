@@ -702,6 +702,106 @@ class TestDynamiaLayout(unittest.TestCase):
         self.assertOk(self.ws.ms("status", cwd=self.ws.project))
 
 
+# ------------------------------------------------------------------ dev-env
+class TestDevEnv(Base):
+    def toml(self):
+        return self.ws.cfg.read_text()
+
+    def test_add_list_and_remove_keep_the_rest_of_the_file(self):
+        self.ws.cfg.write_text("# my notes\n" + self.ws.cfg.read_text() + "\n# tail comment\n")
+        self.assertOk(self.ws.ms("dev-env", "add", "API_URL=http://localhost:8080"))
+        self.assertOk(self.ws.ms("dev-env", "add", "DEBUG=1", "--repo", "app"))
+        self.assertOk(self.ws.ms("dev-env", "add", "API_URL=http://localhost:9090"))
+        text = self.toml()
+        self.assertTrue(text.startswith("# my notes\n"))
+        self.assertIn("# tail comment", text)
+        self.assertEqual(text.count("API_URL"), 1, "setting again replaces the line")
+        listing = self.ws.ms("dev-env", "list").stdout
+        self.assertIn("all            API_URL=http://localhost:9090", listing)
+        self.assertIn("app            DEBUG=1", listing)
+        self.assertOk(self.ws.ms("dev-env", "rm", "DEBUG", "--repo", "app"))
+        self.assertNotIn("DEBUG", self.ws.ms("dev-env", "list").stdout)
+        self.assertIn("absent", self.ws.ms("dev-env", "rm", "NOPE").stdout)
+
+    def test_removing_the_last_variable_drops_the_empty_table(self):
+        before = self.toml()
+        self.ws.ms("dev-env", "add", "A=1", "--repo", "app")
+        self.ws.ms("dev-env", "rm", "A", "--repo", "app")
+        self.assertNotIn("dev", self.toml())
+        self.assertEqual(self.toml().strip(), before.strip())
+
+    def test_a_second_variable_joins_the_existing_table(self):
+        self.ws.ms("dev-env", "add", "A=1")
+        self.ws.ms("dev-env", "add", "B=2")
+        self.assertEqual(self.toml().count("[dev.env]"), 1)
+
+    def test_values_with_quotes_and_unicode_survive(self):
+        self.assertOk(self.ws.ms("dev-env", "add", 'MSG=say "hi" \\ ñ'))
+        import tomllib
+        self.assertEqual(tomllib.loads(self.toml())["dev"]["env"]["MSG"], 'say "hi" \\ ñ')
+
+    def test_bad_input_is_refused_and_the_file_is_untouched(self):
+        before = self.toml()
+        for args in (["add", "1BAD=x"], ["add", "NOEQUALS"], ["add", "A=1", "--repo", "ghost"], ["add", "A=1\nB=2"]):
+            r = self.ws.ms("dev-env", *args)
+            self.assertNotEqual(r.returncode, 0, args)
+        self.assertEqual(self.toml(), before)
+
+    def test_secret_looking_names_are_hidden_in_list_and_noted_on_add(self):
+        r = self.ws.ms("dev-env", "add", "DB_PASSWORD=hunter2")
+        self.assertIn("looks secret", r.stdout)
+        self.assertNotIn("hunter2", self.ws.ms("dev-env", "list").stdout)
+        self.assertIn("hunter2", self.ws.ms("dev-env", "list", "--show").stdout)
+
+    def test_json_listing_for_the_panel_hides_secrets(self):
+        self.ws.ms("dev-env", "add", "API_URL=http://x")
+        self.ws.ms("dev-env", "add", "API_TOKEN=abc", "--repo", "lib")
+        data = json.loads(self.ws.ms("dev-env", "list", "--json").stdout)
+        self.assertEqual(data["repos"], ["app", "lib"])
+        self.assertIn({"scope": "all", "name": "API_URL", "value": "http://x", "secret": False}, data["vars"])
+        self.assertIn({"scope": "lib", "name": "API_TOKEN", "value": "***", "secret": True}, data["vars"])
+
+    def test_variables_reach_the_test_command_and_the_repo_wins(self):
+        self.ws.set_toml("""
+            name = "t"
+            [dev.env]
+            WHO = "workspace"
+            ONLY = "all"
+            [repos.lib]
+            base = "next"
+            [repos.lib.dev.env]
+            WHO = "lib"
+            [repos.lib.test]
+            unit = "echo got-$WHO-$ONLY > seen.txt"
+        """)
+        d = self.ws.batch("b1", "lib")
+        r = self.ws.ms("test", "t0", cwd=d / "lib")
+        self.assertOk(r)
+        self.assertEqual((d / "lib" / "seen.txt").read_text().strip(), "got-lib-all")
+
+    def test_changing_a_variable_invalidates_the_cached_pass(self):
+        self.ws.set_toml("""
+            name = "t"
+            [repos.lib]
+            base = "next"
+            [repos.lib.test]
+            unit = "echo v=$VAR"
+        """)
+        d = self.ws.batch("b1", "lib")
+        self.ws.ms("dev-env", "add", "VAR=1")
+        self.assertOk(self.ws.ms("test", "t0", cwd=d / "lib"))
+        self.assertIn("cached", self.ws.ms("test", "t0", cwd=d / "lib").stdout)
+        self.ws.ms("dev-env", "add", "VAR=2")
+        again = self.ws.ms("test", "t0", cwd=d / "lib")
+        self.assertNotIn("cached", again.stdout)
+
+    def test_works_in_the_dynamia_layout(self):
+        self.ws.close()
+        self.ws = WS(dynamia=True)
+        self.assertOk(self.ws.ms("dev-env", "add", "X=1", cwd=self.ws.project))
+        self.assertIn('X = "1"', self.ws.cfg.read_text())
+
+
 # ------------------------------------------------------------------ claude-md
 class TestClaudeMd(Base):
     def test_create_content_and_order(self):

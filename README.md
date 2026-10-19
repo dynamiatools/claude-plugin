@@ -64,6 +64,7 @@ The plugin name is the prefix, so nothing collides with other skills or agents: 
 | `/dynamia:batch` | Starts a batch: one isolated worktree per repo, optionally one per agent |
 | `/dynamia:integrate` | Merges the agents' branches, reports conflicts, runs the incremental tests |
 | `/dynamia:ship` | Shows what would be sent, asks, syncs, tests, pushes. User-invoked only |
+| `/dynamia:dev-env` | Registers development env vars in `workspace.toml` (asks which; for one repo or all) |
 | `/dynamia:setup` | Installs or removes the hooks, status line and permissions in `settings.json`. User-invoked only |
 | `/dynamia:report` | How it is going: plan usage, where tokens went, flaky or slow tests, next step |
 | `/dynamia:tmux-session` | Starts a tmux session with Claude Code (and Remote Control) in a project folder |
@@ -243,6 +244,18 @@ repo = "erp"
 ```
 
 `ms-workspace claude-md` generates `<workspace>/CLAUDE.md` (repos in dependency order, agent rules, the flow, token and tool guidance, taken from `[tools]`). Only the block between the `ms-workspace:begin/end` markers is managed, so your notes around it survive every regeneration.
+
+## Development environment variables
+
+Local-development variables live in `.dynamia/workspace.toml`, in tables of their own (`[dev.env]` for every repo, `[repos.<r>.dev.env]` for one, which wins). They are applied to the commands the workspace runs: `test` (t0, t1, t2), the e2e command and `env --setup`. A changed value invalidates a cached passing test. Plain text, for local use only.
+
+```bash
+ms-workspace dev-env add API_URL=http://localhost:8080            # every repo
+ms-workspace dev-env add DEBUG=1 --repo erp                        # one repo
+ms-workspace dev-env list [--show|--json]  /  rm NAME [--repo R]   # names that look secret are shown as ***
+```
+
+Three ways in: `/dynamia:dev-env` (Claude asks which variables and registers them), the `ms-workspace` commands above, and the **dev-env panel**, a mod of this plugin: `/env-panel` opens a pane (terminal and desktop, 110+ columns) with the current variables, fields for NAME and value, a repo picker and Add / remove buttons; `/env-panel NAME=value [repo]`, `/env-panel rm NAME [repo]` and `/env-panel list` work everywhere, including the mobile app, which has no input fields yet. The mod is `hooks/register.tsx` (named in `hooks/hooks.json` under `modules`, next to the command hooks); it only calls `ms-workspace dev-env`, which stays the single writer of the file.
 
 ## Hooks
 

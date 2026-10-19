@@ -125,6 +125,7 @@
       "Bash(ms-workspace insights:*)",
       "Bash(ms-workspace tokens:*)",
       "Bash(ms-workspace memory:*)",
+      "Bash(ms-workspace dev-env list:*)",
       "Bash(ms-workspace doctor:*)",
       "Bash(ms-workspace images:*)",
       "Bash(ms-workspace claude-md:*)",
@@ -178,7 +179,9 @@
       "Bash(ms-workspace http bench:*)",
       "Bash(ms-workspace docker clean:*)",
       "Bash(ms-workspace ps kill:*)",
-      "Bash(ms-workspace notify:*)"
+      "Bash(ms-workspace notify:*)",
+      "Bash(ms-workspace dev-env add:*)",
+      "Bash(ms-workspace dev-env rm:*)"
     ]
   }
 }
