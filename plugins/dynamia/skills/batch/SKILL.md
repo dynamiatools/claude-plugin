@@ -7,7 +7,7 @@ allowed-tools: Bash(ms-workspace status:*) Bash(ms-workspace usage:*) Bash(ms-wo
 
 # dynamia:batch
 
-Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/.batches/<batch>/`. All work stays local until `/dynamia:ship`.
+Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/working-trees/<batch>/`. All work stays local until `/dynamia:ship`.
 
 ## Steps
 
@@ -22,9 +22,9 @@ Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/.batch
    ```bash
    ms-workspace batch new <batch> <repo> [<repo>...]
    ```
-   Then write the task list into `<workspace>/.batches/<batch>/TASKS.md` (short checkbox lines; if the repo tracks work in GitHub issues, put only issue numbers there).
+   Then write the task list into `<workspace>/working-trees/<batch>/TASKS.md` (short checkbox lines; if the repo tracks work in GitHub issues, put only issue numbers there).
 
-4. **Decide the agent layout.** Default to **one agent, no extra worktrees**: work directly in `.batches/<batch>/<repo>`. Only when there are independent areas (different repos or modules that do not share files), create one worktree per agent:
+4. **Decide the agent layout.** Default to **one agent, no extra worktrees**: work directly in `working-trees/<batch>/<repo>`. Only when there are independent areas (different repos or modules that do not share files), create one worktree per agent:
    ```bash
    ms-workspace agent new <batch> <task> [<repo>...]
    ```

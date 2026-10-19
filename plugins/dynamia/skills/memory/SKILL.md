@@ -6,7 +6,7 @@ argument-hint: "add <text> | list | search <words> | show <name> | forget <name>
 
 # dynamia:memory
 
-One markdown note per durable fact in `<workspace>/.ms-workspace/memory/`. It is the source of truth; `recall.db` is only a search index over it.
+One markdown note per durable fact in `<workspace>/memory/`. It is the source of truth; `recall.db` is only a search index over it.
 
 ```bash
 ms-workspace memory add --type decision|lesson|gotcha|handoff [--batch B] [--title T] "<text>"

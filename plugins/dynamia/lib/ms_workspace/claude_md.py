@@ -34,7 +34,7 @@ def render(ws: Workspace) -> str:
         out.append(f"- {r}: base `{c.get('base') or 'main'}`, {stacks}, push {c.get('push') or 'direct'}"
                    + (f", depends on {', '.join(deps)}" if deps else ""))
     out += ["", "## Rules for agents",
-            "- Work only inside the repo/module assigned to your task, inside a batch worktree (`.batches/<batch>/...`).",
+            "- Work only inside the repo/module assigned to your task, inside a batch worktree (`working-trees/<batch>/...`, or `.batches/<batch>/...` in an older layout).",
             "- Commit locally. Never `git push`, `gh pr create|merge` or `ms-workspace clean|undo` by hand: a hook blocks them. "
             "Publishing goes through `/dynamia:ship` (plan, confirmation, `ms-workspace ship`), and only when the user asks: "
             "\"open a PR\" means `ship --pr`; \"ship\" or \"publish\" uses each repo's configured push mode. If the plan says RECOMMEND A PR, tell the user and let them choose.",
@@ -56,7 +56,7 @@ def render(ws: Workspace) -> str:
             "", "## Saving tokens",
             "- One agent by default; parallel agents only for independent repos or modules.",
             "- Read `ms-workspace context`, `status` and `log` before exploring the repos.",
-            "- Images pasted in chat are archived under `.ms-workspace/images/`; `ms-workspace images` lists recent ones "
+            "- Images pasted in chat are archived under `images/` in the workspace folder (`.ms-workspace/images/` in an older layout); `ms-workspace images` lists recent ones "
             "(path plus the text sent with them), so you can look at an earlier screenshot with Read instead of asking for it again.",
             "- Hooks shorten huge Bash output (the full text is saved to a file they name) and warn when you re-read an unchanged file: "
             "narrow commands (grep, head, the failing test only) and reuse what is already in context.",

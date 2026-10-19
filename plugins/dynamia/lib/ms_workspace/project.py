@@ -15,7 +15,7 @@ from .core import die
 from .claude_md import BEGIN
 
 EXCLUDE_LINE = ".dynamia/"
-MOVABLE = (".batches", ".ms-workspace", "requests", "mocks")
+MOVABLE = ("requests", "mocks")
 
 
 def _git(cwd: Path, *args: str) -> str | None:
@@ -68,34 +68,40 @@ def cmd_exclude(args: list[str]) -> int:
     return 0
 
 
+def state_moves(old: Path, dest: Path) -> list[tuple[Path, Path]]:
+    """Leftovers of the dot folders: the children of .ms-workspace/ go directly into `dest`, .batches/ becomes working-trees/."""
+    moves = [(c, dest / c.name) for c in sorted((old / ".ms-workspace").iterdir())] if (old / ".ms-workspace").is_dir() else []
+    return moves + ([(old / ".batches", dest / "working-trees")] if (old / ".batches").is_dir() else [])
+
+
 def plan_migration(root: Path, repos: list[str]) -> list[tuple[Path, Path]]:
     """Older layout (everything in one folder): config and state go into .dynamia/; the repos stay where they are."""
     new = root / ".dynamia"
     moves = [(root / "workspace.toml", new / "workspace.toml")]
     moves += [(root / name, new / "workspace" / name) for name in MOVABLE if (root / name).exists()]
-    return moves
+    return moves + state_moves(root, new / "workspace")
 
 
 def cmd_migrate(args: list[str]) -> int:
-    """Move an older layout into .dynamia/, or clones that 0.4/0.5.0 left in .dynamia/workspace/ back to the project folder. Needs --yes to act."""
+    """Bring a workspace to the current layout: an older single-folder one into .dynamia/, clones left in .dynamia/workspace/ out to
+    the project folder, and .batches/ + .ms-workspace/ into working-trees/ + logs/, images/, memory/ ... Needs --yes to act."""
     import tomllib
-    from .core import find_workspace_root
+    from .core import find_workspace_root, in_dynamia
     old = find_workspace_root()
     if old is None:
         die("no workspace found here (nothing to migrate)")
-    inside = old.name == "workspace" and old.parent.name == ".dynamia"
+    inside = in_dynamia(old)
     cfg = tomllib.loads(((old.parent if inside else old) / "workspace.toml").read_text())
     batches = old / ".batches"
     if batches.is_dir() and any(batches.iterdir()):
         die("there are open batches (git worktrees hold absolute paths); ship or clean them first with ms-workspace clean")
     repos = [r for r, c in (cfg.get("repos") or {}).items() if not (c or {}).get("path")]
     if inside:
-        project = old.parent.parent
-        moves = [(old / r, project / r) for r in repos if (old / r / ".git").exists()]
+        moves = [(old / r, old.parent.parent / r) for r in repos if (old / r / ".git").exists()] + state_moves(old, old)
     else:
         moves = plan_migration(old, repos)
     if not moves:
-        die("nothing to migrate: the repos are already in the project folder")
+        die("nothing to migrate: the workspace already has the current layout")
     clash = [str(dst) for _, dst in moves if dst.exists()]
     if clash:
         die("already exists, nothing moved: " + ", ".join(clash))
@@ -107,5 +113,9 @@ def cmd_migrate(args: list[str]) -> int:
     for src, dst in moves:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
+    try:
+        (old / ".ms-workspace").rmdir()   # emptied above; a leftover file keeps it
+    except OSError:
+        pass
     print("Done. CLAUDE.md stays in the project folder; run ms-workspace claude-md to refresh its block.")
     return 0

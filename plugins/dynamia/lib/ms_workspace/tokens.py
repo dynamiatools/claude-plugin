@@ -26,7 +26,7 @@ def _scope(ws: Workspace, cwd: str) -> str | None:
     parts = ws.rel_parts(cwd)
     if parts is None:
         return None
-    if parts and parts[0] == ".batches" and len(parts) >= 3:
+    if parts and parts[0] == ws.batch_dir.name and len(parts) >= 3:
         repo = parts[4] if parts[2] == ".agents" and len(parts) >= 5 else parts[2]
         return f"{parts[1]}/{repo}"
     return parts[0] if parts else "(workspace root)"

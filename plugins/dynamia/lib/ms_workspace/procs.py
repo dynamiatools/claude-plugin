@@ -94,7 +94,7 @@ def label_for(ws: Workspace | None, cwd: str) -> str:
     rel = ws.rel_parts(cwd)
     if rel is None:
         return cwd
-    if rel[:1] == (".batches",) and len(rel) >= 3:
+    if ws is not None and rel[:1] == (ws.batch_dir.name,) and len(rel) >= 3:
         return f"batch {rel[1]}/{rel[2] if rel[2] != '.agents' else rel[-1]}"
     return rel[0] if rel else "workspace root"
 

@@ -30,7 +30,7 @@ Usage:
   ms-workspace status [--fetch]              one line per repo: branch, ahead/behind base, dirty, batches
   ms-workspace claude-md [--print]           (re)generate <project>/CLAUDE.md; only the managed block is touched; an existing file needs --append
   ms-workspace usage [--check] [--need PCT] [--json|--line]   plan usage: 5h session and 7d week, pace, verdict
-  ms-workspace images [list|capture|backfill]   archive images pasted in chat into <workspace>/.ms-workspace/images/
+  ms-workspace images [list|capture|backfill]   archive images pasted in chat into <workspace>/images/
   ms-workspace memory [add|list|search|show|forget]   small local notes: decisions, lessons, gotchas, handoffs
   ms-workspace insights [--days N] [--json]  what the log says: slow/flaky tests, time and plan usage per batch
   ms-workspace tokens [--days N] [--json]    token audit of the Claude Code sessions run inside this workspace

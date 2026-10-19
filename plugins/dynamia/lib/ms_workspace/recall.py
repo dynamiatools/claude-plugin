@@ -4,7 +4,7 @@
     ms-workspace recall index [--rebuild]      (a search refreshes the index first; this is only needed to pre-build it)
     ms-workspace recall status
 
-SQLite FTS5 index at <workspace>/.ms-workspace/recall.db. Secrets are masked before anything is indexed. Nothing leaves the machine.
+SQLite FTS5 index at <workspace>/recall.db. Secrets are masked before anything is indexed. Nothing leaves the machine.
 """
 from __future__ import annotations
 

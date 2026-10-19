@@ -54,10 +54,20 @@ def find_workspace_root(start: str | None = None) -> Path | None:
     return None
 
 
+def in_dynamia(root: Path) -> bool:
+    return root.name == "workspace" and root.parent.name == ".dynamia"
+
+
+def batch_dirname(root: Path) -> str:
+    """Folder of the batch worktrees: `working-trees` inside .dynamia/workspace, `.batches` in the older layouts
+    (and in a .dynamia workspace that still has one, until `migrate`)."""
+    return "working-trees" if in_dynamia(root) and not (root / ".batches").is_dir() else ".batches"
+
+
 class Workspace:
     def __init__(self, root: Path):
-        self.root = root  # repos, .batches/ and .ms-workspace/ live here
-        new = root.name == "workspace" and root.parent.name == ".dynamia" and (root.parent / "workspace.toml").is_file()
+        self.root = root  # batch worktrees and state live here (in the older layouts the repos too)
+        new = in_dynamia(root) and (root.parent / "workspace.toml").is_file()
         self.cfg_path = (root.parent if new else root) / "workspace.toml"
         self.project = root.parent.parent if new else root  # the folder that holds .dynamia/ and CLAUDE.md
         import tomllib  # lazy: only `guard` has to work on Pythons older than 3.11
@@ -65,9 +75,10 @@ class Workspace:
             self.cfg = tomllib.loads(self.cfg_path.read_text())
         except (OSError, tomllib.TOMLDecodeError) as e:
             die(f"could not parse {self.cfg_path}: {e}")
-        self.state_dir = root / ".ms-workspace"
+        # .dynamia/workspace keeps logs/, images/, memory/ ... directly; the older layouts (and a leftover .ms-workspace) keep the dot folder
+        self.state_dir = root if new and not (root / ".ms-workspace").is_dir() else root / ".ms-workspace"
         self.log_dir = self.state_dir / "logs"
-        self.batch_dir = root / ".batches"
+        self.batch_dir = root / batch_dirname(root)
 
     @classmethod
     def load(cls, required: bool = True, start: str | None = None) -> "Workspace | None":

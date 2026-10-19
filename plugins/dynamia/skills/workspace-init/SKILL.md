@@ -18,7 +18,7 @@ what cannot be detected, and keep every question short.
 ├── api/  web/  ...           the repos (multi-repo workspace), in the project folder
 └── .dynamia/
     ├── workspace.toml        the config
-    └── workspace/            batches (.batches/), .ms-workspace/ (logs, memory, images), requests/, mocks/; never the repos
+    └── workspace/            working-trees/ (the batches), logs/, images/, memory/ and the rest of the tool's files; never the repos
 ```
 
 `<project>` is either the repo you are standing in (one-repo workspace) or a new folder (multi-repo workspace). Older workspaces keep `workspace.toml` and everything in one folder, and 0.4/0.5.0 put the clones inside `.dynamia/workspace/`; both still work, and `ms-workspace migrate` moves what needs moving.
@@ -63,7 +63,7 @@ what cannot be detected, and keep every question short.
    - It exists and is the repo's own (`managed` is false): **do not touch it.** Ask with `AskUserQuestion`: "This repo already has a CLAUDE.md. Optimize it by adding the workspace block at the end?" Offer: add the block (recommended; show `ms-workspace claude-md --print` first if the user wants to see it), or leave the file as it is. Only on yes run `ms-workspace claude-md --append`. Everything the user wrote stays.
    - It exists with the managed block: `ms-workspace claude-md` refreshes only the block, no question needed.
 
-7. **Ignore.** One-repo: step 2a already excluded `.dynamia/`. Multi-repo: the project folder is not a repo, nothing to ignore. Mention that archived images under `.dynamia/workspace/.ms-workspace/images/` can contain sensitive data.
+7. **Ignore.** One-repo: step 2a already excluded `.dynamia/`. Multi-repo: the project folder is not a repo, nothing to ignore. Mention that archived images under `.dynamia/workspace/images/` can contain sensitive data.
 
 8. **Report**: path of `workspace.toml`, the dependency order, what was cloned, whether CLAUDE.md was created, extended or left alone, and what was left blank.
 

@@ -10,7 +10,7 @@ import re
 import shlex
 import sys
 
-from .core import find_workspace_root
+from .core import batch_dirname, find_workspace_root
 
 SEPARATORS = {"&&", "||", ";", "|", "&", "\n", "(", ")", "{", "}"}
 WRAPPERS = {"sudo", "command", "exec", "nohup", "time", "env", "xargs", "nice", "stdbuf", "timeout", "rtk", "proxy"}
@@ -130,9 +130,9 @@ def cmd_guard() -> int:
     root = find_workspace_root()
     if root is None:
         return 0
-    batches = str(root / ".batches")
+    names = {".batches", batch_dirname(root)}
     # Inside a batch, or reaching into one from elsewhere (`cd .batches/b/lib && git push`).
-    if not ((os.getcwd() + "/").startswith(batches + "/") or ".batches" in command):
+    if not (any((os.getcwd() + "/").startswith(str(root / n) + "/") for n in names) or any(n in command for n in names)):
         return 0
     try:
         reason = analyze(command)

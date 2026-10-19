@@ -53,6 +53,7 @@ class WS:
     def __init__(self, repos=("lib", "app"), toml=DEFAULT_TOML, dynamia=False):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name).resolve()
+        self.dynamia = dynamia
         self.project = self.tmp / "ws"
         # dynamia=True is the .dynamia/ layout: workspace.toml in .dynamia/, state in .dynamia/workspace/; the repos stay in the project folder
         self.root = self.project / ".dynamia" / "workspace" if dynamia else self.project
@@ -112,7 +113,7 @@ class WS:
     def batch(self, name="b1", *repos):
         r = self.ms("batch", "new", name, *repos)
         assert r.returncode == 0, r.stderr
-        return self.root / ".batches" / name
+        return self.root / ("working-trees" if self.dynamia else ".batches") / name
 
     def remote_log(self, repo, branch="next"):
         return self.git(self.tmp / f"remote-{repo}.git", "log", "--format=%s", branch).splitlines()
@@ -623,7 +624,7 @@ class TestDynamiaLayout(unittest.TestCase):
         self.assertEqual(self.ws.root, self.ws.project / ".dynamia" / "workspace")
         self.assertOk(self.ws.ms("status", cwd=self.ws.project))
         d = self.ws.batch("b1", "lib")
-        self.assertEqual(d, self.ws.root / ".batches" / "b1")
+        self.assertEqual(d, self.ws.root / "working-trees" / "b1")
         r = self.ws.ms("status", cwd=d / "lib")
         self.assertOk(r)
         self.assertIn("lib", r.stdout)
@@ -701,6 +702,31 @@ class TestDynamiaLayout(unittest.TestCase):
         self.assertIn("nothing to migrate", self.ws.ms("migrate").stderr)
         self.assertOk(self.ws.ms("status", cwd=self.ws.project))
 
+    def test_state_folders_sit_directly_in_the_workspace_folder(self):
+        self.ws = WS(dynamia=True)
+        self.ws.batch("b1", "lib")
+        self.assertOk(self.ws.ms("test", "t0", "--repo", "lib", cwd=self.ws.root / "working-trees" / "b1" / "lib"))
+        self.assertTrue((self.ws.root / "logs").is_dir())
+        self.assertFalse((self.ws.root / ".ms-workspace").exists())
+        self.assertFalse((self.ws.root / ".batches").exists())
+
+    def test_migrate_renames_the_dot_folders_of_0_6_0(self):
+        self.ws = WS(dynamia=True)
+        root = self.ws.root
+        (root / ".ms-workspace" / "logs").mkdir(parents=True)
+        (root / ".ms-workspace" / "logs" / "2026-01-01.jsonl").write_text("{}\n")
+        (root / ".ms-workspace" / "images").mkdir()
+        (root / ".batches").mkdir()
+        self.assertOk(self.ws.ms("status", cwd=self.ws.project))   # a leftover dot folder is still honoured
+        self.assertIn("would move", self.ws.ms("migrate").stdout)
+        self.assertOk(self.ws.ms("migrate", "--yes"))
+        self.assertTrue((root / "logs" / "2026-01-01.jsonl").is_file())
+        self.assertTrue((root / "images").is_dir())
+        self.assertTrue((root / "working-trees").is_dir())
+        self.assertFalse((root / ".ms-workspace").exists())
+        self.assertFalse((root / ".batches").exists())
+        self.assertIn("nothing to migrate", self.ws.ms("migrate").stderr)
+
     def test_migrate_moves_the_older_layout_and_refuses_open_batches(self):
         self.ws = WS()
         self.ws.batch("b1", "lib")
@@ -716,6 +742,8 @@ class TestDynamiaLayout(unittest.TestCase):
         self.assertTrue((new / "workspace.toml").is_file())
         self.assertTrue((self.ws.project / "lib" / ".git").exists(), "the repos stay where they are")
         self.assertFalse((new / "workspace" / "lib").exists())
+        self.assertTrue((new / "workspace" / "logs").is_dir(), "state folders lose their dot folder")
+        self.assertFalse((new / "workspace" / ".ms-workspace").exists())
         self.assertOk(self.ws.ms("status", cwd=self.ws.project))
 
 

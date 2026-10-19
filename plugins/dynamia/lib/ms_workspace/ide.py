@@ -2,12 +2,12 @@
 
     ms-workspace open <batch> [--ide code|idea] [--repo R] [--agent TASK] [--dry-run]
 
-What gets opened (the real worktree paths under .batches/<batch>/):
+What gets opened (the real worktree paths under working-trees/<batch>/):
     default        the batch's int/<batch> worktrees, one per repo
-    --agent TASK   the worktrees of that agent (.batches/<batch>/.agents/<TASK>/<repo>)
+    --agent TASK   the worktrees of that agent (working-trees/<batch>/.agents/<TASK>/<repo>)
     --repo R       only that repo (repeatable)
 
-VS Code: one generated <workspace>/.ms-workspace/ide/<batch>[--<task>].code-workspace listing the folders, so search,
+VS Code: one generated <workspace>/ide/<batch>[--<task>].code-workspace listing the folders, so search,
     git and the window title only ever see that batch. It lives outside every repo, is rewritten only when it changes,
     and opening it again focuses the same window.
 IntelliJ: IDEA opens one directory per project and only recognizes Maven/Gradle modules from that directory's own
