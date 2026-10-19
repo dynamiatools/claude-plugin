@@ -32,9 +32,9 @@ The plugin provides the skills (`/dynamia:<skill>`), the agents (`dynamia:<agent
 It shows a preview, asks, makes a backup and then:
 - adds the status line (`ms-statusline`) and the permission rules to `~/.claude/settings.json`, and removes an older copy of the hooks so they do not run twice;
 - copies the global instructions to `~/.claude/DYNAMIA.md` and adds one `@DYNAMIA.md` import line to `~/.claude/CLAUDE.md`, between `dynamia:begin/end` markers (your own content in that file stays; a link to the repo file is replaced, never written through);
-- links `ms-workspace` and `ms-statusline` into `~/.local/bin` (add it to your `PATH` if the report says so).
+- puts `ms-workspace` and `ms-statusline` in `~/.local/bin` as small launchers that run the newest installed plugin version, and points the status line at them (add `~/.local/bin` to your `PATH` if the report says so).
 
-Run it again after every `/plugin update`: those three point into the plugin folder, which holds the version. Check with `ms-workspace doctor`. Nothing needs a clone of the repo or `install.sh`.
+Once is enough: the launchers find the newest version themselves, so `/plugin update` needs no new setup. Run it again only to refresh the `~/.claude/DYNAMIA.md` copy (`ms-workspace doctor` tells you when it is outdated). Check with `ms-workspace doctor`. Nothing needs a clone of the repo or `install.sh`.
 
 To remove: `/dynamia:setup --remove` (undoes the three), then `/plugin uninstall dynamia@dynamia-tools`.
 

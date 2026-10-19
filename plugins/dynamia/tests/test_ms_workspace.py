@@ -1529,6 +1529,47 @@ class TestSetupHooks(Base):
         self.assertIn("@DYNAMIA.md", text)
         self.assertTrue(text.startswith("# Mine\n") and text.endswith("# After\n"))
 
+    def fake_plugin(self, version, banner):
+        d = self.ws.tmp / "cfg" / "plugins" / "cache" / "mk" / "dynamia" / version
+        (d / "bin").mkdir(parents=True)
+        for n in ("ms-workspace", "ms-statusline"):
+            (d / "bin" / n).write_text(f'#!/bin/sh\necho "{banner} {n} $*"\n')
+            (d / "bin" / n).chmod(0o755)
+        (d / "CLAUDE.md").write_text("# Fake instructions\n")
+        return d
+
+    def test_global_installs_a_launcher_that_follows_plugin_updates(self):
+        self.home.mkdir(parents=True)
+        old = self.fake_plugin("0.9.0", "v09")
+        self.bin = self.ws.tmp / "local-bin"
+        self.env = {**self.env, "BIN_DIR": str(self.bin), "CLAUDE_CONFIG_DIR": str(self.ws.tmp / "cfg")}
+        r = self.setup("--global", "--plugin-root", str(old))
+        self.assertOk(r)
+        self.assertIn("launcher", r.stdout)
+        self.assertFalse((self.bin / "ms-workspace").is_symlink())
+        self.assertEqual(self.load()["statusLine"]["command"], f'"{self.bin / "ms-statusline"}"', "the status line does not hold the version")
+        run_env = {**os.environ, "CLAUDE_CONFIG_DIR": str(self.ws.tmp / "cfg")}
+        out = lambda: subprocess.run([str(self.bin / "ms-workspace"), "hi"], capture_output=True, text=True, env=run_env)
+        self.assertEqual(out().stdout.strip(), "v09 ms-workspace hi")
+        self.fake_plugin("0.10.0", "v10")   # an update: newest wins, compared as numbers
+        self.assertEqual(out().stdout.strip(), "v10 ms-workspace hi")
+        self.assertIn("present  launcher", self.setup("--global", "--plugin-root", str(old)).stdout, "idempotent")
+        self.assertOk(self.setup("--global", "--plugin-root", str(old), "--remove"))
+        self.assertFalse((self.bin / "ms-workspace").exists())
+
+    def test_launcher_replaces_an_old_link_and_reports_a_missing_plugin(self):
+        self.home.mkdir(parents=True)
+        d = self.fake_plugin("0.1.0", "v01")
+        self.bin = self.ws.tmp / "local-bin"
+        self.bin.mkdir()
+        (self.bin / "ms-workspace").symlink_to(REPO / "bin" / "ms-workspace")
+        self.env = {**self.env, "BIN_DIR": str(self.bin)}
+        self.assertIn("updated", self.setup("--global", "--plugin-root", str(d)).stdout)
+        self.assertFalse((self.bin / "ms-workspace").is_symlink())
+        r = subprocess.run([str(self.bin / "ms-workspace")], capture_output=True, text=True, env={**os.environ, "CLAUDE_CONFIG_DIR": str(self.ws.tmp / "nowhere")})
+        self.assertEqual(r.returncode, 127)
+        self.assertIn("plugin not found", r.stderr)
+
     def test_global_keeps_a_real_file_in_the_bin_dir(self):
         self.home.mkdir(parents=True)
         self.bin = self.ws.tmp / "local-bin"

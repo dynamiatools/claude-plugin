@@ -77,10 +77,10 @@ def merge(settings: dict, src: dict) -> list[str]:
     return report
 
 
-def use_plugin_root(settings: dict, src: dict, root: str) -> list[str]:
+def use_plugin_root(settings: dict, src: dict, root: str, command: str | None = None) -> list[str]:
     """Plugin mode: the plugin ships the hooks itself, so drop our copies from settings.json and
     point the status line at the plugin's script (a plugin's bin/ is not on the status line's PATH).
-    shortcut: the path holds the plugin version, so /dynamia:setup must run again after an update."""
+    `command` replaces the plugin path when a launcher outside the versioned folder exists (see global_bin)."""
     report, cmds = [], our_commands(src)
     for event in list(settings.get("hooks", {})):
         for g in settings["hooks"][event]:
@@ -92,7 +92,7 @@ def use_plugin_root(settings: dict, src: dict, root: str) -> list[str]:
     if not settings.get("hooks"):
         settings.pop("hooks", None)
     src["hooks"], src["statusLine"] = {}, None  # merge() then only adds the permissions
-    line = {"type": "command", "command": f'"{root}/bin/ms-statusline"'}
+    line = {"type": "command", "command": command or f'"{root}/bin/ms-statusline"'}
     cur = (settings.get("statusLine") or {}).get("command", "")
     if cur == line["command"]:
         report.append(f"present  statusLine: {cur}")
@@ -204,28 +204,63 @@ def global_md(root: Path, dry: bool, undo: bool) -> list[str]:
     return report
 
 
+LAUNCHER_MARK = "# dynamia launcher"
+LAUNCHER = """#!/bin/sh
+# dynamia launcher (managed by /dynamia:setup): runs the newest installed dynamia plugin, so an update needs no new setup.
+dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/cache"
+best=$(for d in "$dir"/*/dynamia/*/; do [ -x "${d}bin/%(name)s" ] || continue; v=${d%%/}; echo "${v##*/} $d"; done 2>/dev/null \
+  | sort -t. -k1,1n -k2,2n -k3,3n | tail -1 | cut -d' ' -f2-)
+[ -n "$best" ] || { echo "dynamia plugin not found under $dir (install it: /plugin install dynamia@dynamia-tools)" >&2; exit 127; }
+exec "${best}bin/%(name)s" "$@"
+"""
+
+
+def is_cached(root: Path) -> bool:
+    """True for a plugin installed by Claude Code (.../plugins/cache/<marketplace>/dynamia/<version>): its path holds the version."""
+    parts = root.resolve().parts
+    return len(parts) >= 5 and parts[-4] == "cache" and parts[-5] == "plugins" and parts[-2] == "dynamia"
+
+
+def _is_launcher(path: Path) -> bool:
+    try:
+        return path.is_file() and not path.is_symlink() and LAUNCHER_MARK in path.read_text()[:200]
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def global_bin(root: Path, dry: bool, undo: bool) -> list[str]:
-    """Link ms-workspace and ms-statusline into ~/.local/bin; replace only links that already point to some plugin or repo bin/."""
+    """Put ms-workspace and ms-statusline in ~/.local/bin. A cached plugin gets a small launcher that finds the newest version
+    (so updates need no new setup); a repo checkout or --plugin-dir gets a link. Only our own links and launchers are replaced."""
     report, dest = [], bin_dir()
+    launcher = is_cached(root)
     for name in BIN_NAMES:
         src, dst = root / "bin" / name, dest / name
-        ours = dst.is_symlink() and os.readlink(dst).endswith(f"/bin/{name}")
+        old_link = dst.is_symlink() and os.readlink(dst).endswith(f"/bin/{name}")
+        ours = old_link or _is_launcher(dst)
+        text = LAUNCHER % {"name": name}
         if undo:
             if ours:
-                report.append(f"removed  link {dst}")
+                report.append(f"removed  {dst}")
                 if not dry:
                     dst.unlink()
-        elif ours and os.readlink(dst) == str(src):
+        elif launcher and _is_launcher(dst) and dst.read_text() == text:
+            report.append(f"present  launcher {dst}")
+        elif not launcher and dst.is_symlink() and os.readlink(dst) == str(src):
             report.append(f"present  link {dst}")
         elif ours or not dst.exists() and not dst.is_symlink():
-            report.append(f"{'updated' if ours else 'added  '}  link {dst} -> {src}")
+            what = f"launcher {dst} (runs the newest installed plugin)" if launcher else f"link {dst} -> {src}"
+            report.append(f"{'updated' if ours else 'added  '}  {what}")
             if not dry:
                 dest.mkdir(parents=True, exist_ok=True)
                 if ours:
                     dst.unlink()
-                dst.symlink_to(src)
+                if launcher:
+                    dst.write_text(text)
+                    dst.chmod(0o755)
+                else:
+                    dst.symlink_to(src)
         else:
-            report.append(f"kept     {dst} already exists and is not a link to this tool")
+            report.append(f"kept     {dst} already exists and is not ours")
     if not undo and str(dest) not in os.environ.get("PATH", "").split(":"):
         report.append(f"note     {dest} is not in PATH; add it to your shell profile")
     return report
@@ -258,7 +293,9 @@ def cmd_setup_hooks(args: list[str]) -> int:
         i = args.index("--plugin-root")
         if i + 1 >= len(args):
             die("--plugin-root needs the plugin folder")
-        report = use_plugin_root(settings, src, args[i + 1].rstrip("/"))
+        root = args[i + 1].rstrip("/")
+        launcher = "--global" in args and is_cached(Path(root))  # the launcher is only installed with --global
+        report = use_plugin_root(settings, src, root, f'"{bin_dir() / "ms-statusline"}"' if launcher else None)
     report += remove(settings, src) if undo else merge(settings, src)
     changed = json.dumps(settings, sort_keys=True) != before
     print(f"{'(dry run) ' if dry else ''}{'Removing from' if undo else 'Merging into'} {target}")

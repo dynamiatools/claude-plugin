@@ -186,6 +186,11 @@ def cmd_doctor(ws: Workspace | None) -> int:
     except (OSError, ValueError):
         warn("could not read settings.json to check hooks (run /dynamia:setup)")
 
+    from .setup import claude_home
+    doc, mine = claude_home() / "DYNAMIA.md", SOURCE.parents[1] / "CLAUDE.md"
+    if doc.is_file() and mine.is_file():
+        ok("~/.claude/DYNAMIA.md is current") if doc.read_text() == mine.read_text() else warn("~/.claude/DYNAMIA.md is outdated (run /dynamia:setup to refresh it)")
+
     print("Plan usage:")
     snap = snapshot_path()
     if snap.is_file():
