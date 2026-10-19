@@ -1,7 +1,7 @@
 """Project helpers for workspace-init: detect a repo, keep .dynamia/ out of git, move an older layout.
 
-The workspace lives in <project>/.dynamia/ (workspace.toml plus workspace/ for clones, batches and state);
-the project folder keeps only CLAUDE.md. When the project is itself a git repo, .dynamia/ is excluded locally
+The workspace lives in <project>/.dynamia/ (workspace.toml plus workspace/ for batches and state); the project
+folder keeps CLAUDE.md and the repos themselves. When the project is itself a git repo, .dynamia/ is excluded locally
 through .git/info/exclude, so nothing is added to the repo's tracked files.
 """
 from __future__ import annotations
@@ -69,33 +69,40 @@ def cmd_exclude(args: list[str]) -> int:
 
 
 def plan_migration(root: Path, repos: list[str]) -> list[tuple[Path, Path]]:
+    """Older layout (everything in one folder): config and state go into .dynamia/; the repos stay where they are."""
     new = root / ".dynamia"
     moves = [(root / "workspace.toml", new / "workspace.toml")]
-    moves += [(root / name, new / "workspace" / name) for name in (*repos, *MOVABLE) if (root / name).exists()]
+    moves += [(root / name, new / "workspace" / name) for name in MOVABLE if (root / name).exists()]
     return moves
 
 
 def cmd_migrate(args: list[str]) -> int:
-    """Move the older layout (workspace.toml, clones, .batches, state in one folder) into .dynamia/. Needs --yes to act."""
-    import os
+    """Move an older layout into .dynamia/, or clones that 0.4/0.5.0 left in .dynamia/workspace/ back to the project folder. Needs --yes to act."""
     import tomllib
     from .core import find_workspace_root
     old = find_workspace_root()
-    if old is None or not (old / "workspace.toml").is_file():
-        die("no older-layout workspace found here (nothing to migrate)")
-    cfg = tomllib.loads((old / "workspace.toml").read_text())
+    if old is None:
+        die("no workspace found here (nothing to migrate)")
+    inside = old.name == "workspace" and old.parent.name == ".dynamia"
+    cfg = tomllib.loads(((old.parent if inside else old) / "workspace.toml").read_text())
     batches = old / ".batches"
     if batches.is_dir() and any(batches.iterdir()):
         die("there are open batches (git worktrees hold absolute paths); ship or clean them first with ms-workspace clean")
     repos = [r for r, c in (cfg.get("repos") or {}).items() if not (c or {}).get("path")]
-    moves = plan_migration(old, repos)
+    if inside:
+        project = old.parent.parent
+        moves = [(old / r, project / r) for r in repos if (old / r / ".git").exists()]
+    else:
+        moves = plan_migration(old, repos)
+    if not moves:
+        die("nothing to migrate: the repos are already in the project folder")
     clash = [str(dst) for _, dst in moves if dst.exists()]
     if clash:
         die("already exists, nothing moved: " + ", ".join(clash))
     for src, dst in moves:
         print(f"{'move' if '--yes' in args else 'would move'}  {src} -> {dst}")
     if "--yes" not in args:
-        print("Run again with --yes to apply (commit or stash nothing is needed: clones are moved as folders).")
+        print("Run again with --yes to apply (nothing needs to be committed or stashed: folders are moved as they are).")
         return 0
     for src, dst in moves:
         dst.parent.mkdir(parents=True, exist_ok=True)

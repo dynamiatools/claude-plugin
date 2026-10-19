@@ -10,6 +10,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,7 +54,7 @@ class WS:
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name).resolve()
         self.project = self.tmp / "ws"
-        # dynamia=True is the .dynamia/ layout: workspace.toml in .dynamia/, clones and state in .dynamia/workspace/
+        # dynamia=True is the .dynamia/ layout: workspace.toml in .dynamia/, state in .dynamia/workspace/; the repos stay in the project folder
         self.root = self.project / ".dynamia" / "workspace" if dynamia else self.project
         self.cfg = self.project / ".dynamia" / "workspace.toml" if dynamia else self.root / "workspace.toml"
         self.home = self.tmp / "home"
@@ -73,11 +74,11 @@ class WS:
             remote = self.tmp / f"remote-{r}.git"
             self.git(self.tmp, "init", "-q", "--bare", str(remote))
             self.git(remote, "symbolic-ref", "HEAD", "refs/heads/next")
-            self.git(self.tmp, "clone", "-q", str(remote), str(self.root / r))
-            self.git(self.root / r, "checkout", "-q", "-b", "next")
-            (self.root / r / "a.txt").write_text("base\n")
-            self.commit(self.root / r, "init")
-            self.git(self.root / r, "push", "-q", "origin", "next")
+            self.git(self.tmp, "clone", "-q", str(remote), str(self.project / r))
+            self.git(self.project / r, "checkout", "-q", "-b", "next")
+            (self.project / r / "a.txt").write_text("base\n")
+            self.commit(self.project / r, "init")
+            self.git(self.project / r, "push", "-q", "origin", "next")
         if toml is not None:
             self.cfg.write_text(textwrap.dedent(toml))
 
@@ -684,6 +685,22 @@ class TestDynamiaLayout(unittest.TestCase):
         self.assertFalse((proj / ".dynamia" / "workspace" / "CLAUDE.md").exists())
         self.assertIn("Updated", self.ws.ms("claude-md", cwd=proj).stdout, "once managed, it refreshes without asking")
 
+    def test_repos_live_in_the_project_folder_and_old_clones_inside_the_workspace_still_work(self):
+        self.ws = WS(dynamia=True)
+        self.assertEqual(self.ws.ms("status", cwd=self.ws.project).returncode, 0)
+        self.assertTrue((self.ws.project / "lib" / ".git").exists())
+        self.assertFalse((self.ws.root / "lib").exists())
+        shutil.move(str(self.ws.project / "lib"), str(self.ws.root / "lib"))   # the 0.4 / 0.5.0 layout
+        self.assertIn("lib", self.ws.ms("status", cwd=self.ws.project).stdout)
+        dry = self.ws.ms("migrate")
+        self.assertIn("would move", dry.stdout)
+        self.assertTrue((self.ws.root / "lib").exists(), "a dry run moves nothing")
+        self.assertOk(self.ws.ms("migrate", "--yes"))
+        self.assertTrue((self.ws.project / "lib" / ".git").exists())
+        self.assertFalse((self.ws.root / "lib").exists())
+        self.assertIn("nothing to migrate", self.ws.ms("migrate").stderr)
+        self.assertOk(self.ws.ms("status", cwd=self.ws.project))
+
     def test_migrate_moves_the_older_layout_and_refuses_open_batches(self):
         self.ws = WS()
         self.ws.batch("b1", "lib")
@@ -697,8 +714,8 @@ class TestDynamiaLayout(unittest.TestCase):
         self.assertOk(self.ws.ms("migrate", "--yes"))
         new = self.ws.project / ".dynamia"
         self.assertTrue((new / "workspace.toml").is_file())
-        self.assertTrue((new / "workspace" / "lib" / ".git").exists())
-        self.assertFalse((self.ws.project / "lib").exists())
+        self.assertTrue((self.ws.project / "lib" / ".git").exists(), "the repos stay where they are")
+        self.assertFalse((new / "workspace" / "lib").exists())
         self.assertOk(self.ws.ms("status", cwd=self.ws.project))
 
 

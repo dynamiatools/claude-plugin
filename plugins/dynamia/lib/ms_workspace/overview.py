@@ -150,7 +150,7 @@ def cmd_doctor(ws: Workspace | None) -> int:
             want("go")
         if "rust" in stacks:
             want("cargo")
-        compose = list(ws.root.glob("docker-compose*.yml")) + list(ws.root.glob("*/docker-compose*.yml"))
+        compose = list(ws.project.glob("docker-compose*.yml")) + list(ws.project.glob("*/docker-compose*.yml"))
         if ws.get("e2e", "command") or compose:
             want("docker")
 
