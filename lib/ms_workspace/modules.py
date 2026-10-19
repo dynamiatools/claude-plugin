@@ -164,7 +164,7 @@ def find_module(graph: dict, ref: str) -> str:
 def repo_dir(ws: Workspace | None, name: str | None) -> Path:
     if name and ws is not None:
         batch = batch_of_cwd(ws)
-        d = (ws.batch_dir / batch / name) if batch and (ws.batch_dir / batch / name).is_dir() else ws.root / name
+        d = (ws.batch_dir / batch / name) if batch and (ws.batch_dir / batch / name).is_dir() else ws.repo_dir(name)
         if not d.is_dir():
             die(f"repo '{name}' not found")
         return d

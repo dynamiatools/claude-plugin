@@ -41,8 +41,14 @@ def git_out(cwd, *args) -> str:
 
 # ------------------------------------------------------------------- workspace
 def find_workspace_root(start: str | None = None) -> Path | None:
+    """The workspace folder: <project>/.dynamia/workspace when <project>/.dynamia/workspace.toml exists,
+    else (older layout) the nearest parent holding workspace.toml."""
     here = Path(os.environ.get("MS_WORKSPACE") or start or os.getcwd()).resolve()
     for p in (here, *here.parents):
+        if p.name == ".dynamia" and (p / "workspace.toml").is_file():
+            return p / "workspace"
+        if (p / ".dynamia" / "workspace.toml").is_file():
+            return p / ".dynamia" / "workspace"
         if (p / "workspace.toml").is_file():
             return p
     return None
@@ -50,8 +56,10 @@ def find_workspace_root(start: str | None = None) -> Path | None:
 
 class Workspace:
     def __init__(self, root: Path):
-        self.root = root
-        self.cfg_path = root / "workspace.toml"
+        self.root = root  # repos, .batches/ and .ms-workspace/ live here
+        new = root.name == "workspace" and root.parent.name == ".dynamia" and (root.parent / "workspace.toml").is_file()
+        self.cfg_path = (root.parent if new else root) / "workspace.toml"
+        self.project = root.parent.parent if new else root  # the folder that holds .dynamia/ and CLAUDE.md
         import tomllib  # lazy: only `guard` has to work on Pythons older than 3.11
         try:
             self.cfg = tomllib.loads(self.cfg_path.read_text())
@@ -66,7 +74,7 @@ class Workspace:
         root = find_workspace_root(start)
         if root is None:
             if required:
-                die("no workspace.toml found (run the dynamia:workspace-init skill first)")
+                die("no .dynamia/workspace.toml found (run the dynamia:workspace-init skill first)")
             return None
         return cls(root)
 
@@ -78,6 +86,24 @@ class Workspace:
                 return default
             node = node[k]
         return default if node is None else node
+
+    def repo_dir(self, repo: str) -> Path:
+        """Where a repo's clone is: its `path` (relative to the project folder; "." for a workspace inside the repo) or <root>/<repo>."""
+        path = self.repo_cfg(repo).get("path")
+        return (self.project / path).resolve() if path else self.root / repo
+
+    def contains(self, cwd: str) -> bool:
+        return cwd == str(self.project) or cwd.startswith(str(self.project) + "/")
+
+    def rel_parts(self, cwd: str) -> tuple[str, ...] | None:
+        """cwd as path parts below the workspace folder, else below the project folder; None when outside both."""
+        p = Path(cwd).resolve()
+        for base in (self.root, self.project):
+            try:
+                return p.relative_to(base).parts
+            except ValueError:
+                pass
+        return None
 
     def repo_names(self) -> list[str]:
         return sorted(self.get("repos", default={}))

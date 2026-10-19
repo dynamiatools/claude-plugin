@@ -55,7 +55,7 @@ def cmd_log(ws: Workspace, args: list[str]) -> int:
 def cmd_status(ws: Workspace, args: list[str]) -> int:
     fetch = "--fetch" in args
     for r in ws.repo_names():
-        d = ws.root / r
+        d = ws.repo_dir(r)
         if not (d / ".git").exists():
             print(f"{r}: (not cloned)")
             continue
@@ -156,12 +156,12 @@ def cmd_doctor(ws: Workspace | None) -> int:
 
         print("Workspace:")
         for r in ws.repo_names():
-            if not (ws.root / r / ".git").exists():
-                miss(f"repo '{r}' not cloned at {ws.root / r}")
+            if not (ws.repo_dir(r) / ".git").exists():
+                miss(f"repo '{r}' not cloned at {ws.repo_dir(r)}")
                 continue
             base = ws.base(r)
-            if not (git_ok(ws.root / r, "rev-parse", "--verify", "--quiet", f"origin/{base}")
-                    or git_ok(ws.root / r, "rev-parse", "--verify", "--quiet", base)):
+            if not (git_ok(ws.repo_dir(r), "rev-parse", "--verify", "--quiet", f"origin/{base}")
+                    or git_ok(ws.repo_dir(r), "rev-parse", "--verify", "--quiet", base)):
                 miss(f"repo '{r}': base branch '{base}' not found")
             for d in ws.deps(r):
                 if d not in ws.repo_names():

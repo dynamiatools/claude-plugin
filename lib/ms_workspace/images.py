@@ -159,7 +159,7 @@ def backfill(ws: Workspace) -> int:
                     continue
                 if cwd:
                     break
-        if cwd and (cwd == str(ws.root) or cwd.startswith(str(ws.root) + "/")):
+        if cwd and ws.contains(cwd):
             total += extract_images(ws, f, f.stem)
     print(f"Saved {total} image(s) into {img_dir(ws)}")
     ws.log("images", "ok", "", "", f"backfill saved {total}")

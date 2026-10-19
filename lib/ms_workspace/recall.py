@@ -67,7 +67,7 @@ def in_workspace(path: Path, ws: Workspace) -> bool:
             except ValueError:
                 continue
             if cwd:
-                return cwd == str(ws.root) or cwd.startswith(str(ws.root) + "/")
+                return ws.contains(cwd)
     return False
 
 

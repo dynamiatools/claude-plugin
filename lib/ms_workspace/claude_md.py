@@ -85,9 +85,13 @@ def cmd_claude_md(ws: Workspace, args: list[str]) -> int:
     if args[:1] == ["--print"]:
         print(block, end="")
         return 0
-    target = ws.root / "CLAUDE.md"
+    target = ws.project / "CLAUDE.md"
     if target.exists():
         text = target.read_text()
+        if BEGIN not in text and "--append" not in args:
+            print(f"{target} already exists and is yours: left untouched.\n"
+                  "Run with --print to see the block, or with --append to add it at the end (everything above it stays).")
+            return 3
         if BEGIN in text:
             head, _, rest = text.partition(BEGIN)
             if END not in rest:

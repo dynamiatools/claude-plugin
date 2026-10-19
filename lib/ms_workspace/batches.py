@@ -41,7 +41,7 @@ def unintegrated(ws: Workspace, batch: str, repo: str) -> list[str]:
 # ------------------------------------------------------------ environment files
 def copy_env(ws: Workspace, repo: str, dst: Path) -> None:
     """Copy gitignored files a fresh worktree lacks: .worktreeinclude, env_files and settings.local.json."""
-    src = ws.root / repo
+    src = ws.repo_dir(repo)
     names = set()
     if (src / ".worktreeinclude").is_file():
         r = git(src, "ls-files", "--others", "--ignored", "--exclude-from=.worktreeinclude")
@@ -124,8 +124,8 @@ def cmd_env(ws: Workspace, args: list[str]) -> int:
 def _rollback(ws: Workspace, created: list[tuple[str, Path, str]], directory: Path | None) -> None:
     """Undo the worktrees and branches created by a failed command so a rerun starts clean."""
     for repo, wt, branch in reversed(created):
-        git(ws.root / repo, "worktree", "remove", "--force", str(wt))
-        git(ws.root / repo, "branch", "-D", branch)
+        git(ws.repo_dir(repo), "worktree", "remove", "--force", str(wt))
+        git(ws.repo_dir(repo), "branch", "-D", branch)
     if directory is not None:
         shutil.rmtree(directory, ignore_errors=True)
 
@@ -141,7 +141,7 @@ def cmd_batch(ws: Workspace, args: list[str]) -> int:
     created: list[tuple[str, Path, str]] = []
     try:
         for r in repos:
-            src, base = ws.root / r, ws.base(r)
+            src, base = ws.repo_dir(r), ws.base(r)
             if r not in ws.repo_names() or not (src / ".git").exists():
                 ws.log("batch.new", "error", r, name, f"repo not found at {src}")
                 die(f"repo '{r}' not found at {src}")
@@ -336,7 +336,7 @@ def _ship(ws: Workspace, args: list[str]) -> int:
             die(f"{r}: base '{base}' is a release branch; ship never targets those")
         if push_mode(ws, r, force_pr) == "pr" and not shutil.which("gh"):
             die(f"{r}: a pull request needs the GitHub CLI (gh) in PATH; nothing was pushed")
-        if not git_ok(ws.root / r, "fetch", "origin", base, "--quiet"):
+        if not git_ok(ws.repo_dir(r), "fetch", "origin", base, "--quiet"):
             eprint(f"warn: could not fetch {r}/{base}")
         if ahead_of_base(wt, base) == 0:
             print(f"skip {r} (nothing to ship)")
@@ -485,9 +485,9 @@ def cmd_clean(ws: Workspace, args: list[str]) -> int:
         res = git(main_wt, "worktree", "remove", *flags, str(main_wt))
         if res.returncode != 0:
             die(f"{r}: could not remove {main_wt}: {res.stderr.strip()}")
-        refs = git_out(ws.root / r, "for-each-ref", "--format=%(refname:short)", f"refs/heads/agent/{batch}/", f"refs/heads/int/{batch}")
+        refs = git_out(ws.repo_dir(r), "for-each-ref", "--format=%(refname:short)", f"refs/heads/agent/{batch}/", f"refs/heads/int/{batch}")
         for b in refs.splitlines():
-            git(ws.root / r, "branch", "-D", b)
+            git(ws.repo_dir(r), "branch", "-D", b)
         ws.log("clean", "ok", r, batch, "")
         print(f"  cleaned {r}")
     from .memory import drop_batch_handoffs
@@ -518,7 +518,7 @@ def cmd_undo(ws: Workspace, args: list[str]) -> int:
     batch, failed = record["batch"], False
     print(f"Undo of the ship of '{batch}' made at {record['ts']}:")
     for r in reversed(topo(ws, list(record["repos"]))):
-        info, repo_dir = record["repos"][r], ws.root / r
+        info, repo_dir = record["repos"][r], ws.repo_dir(r)
         base, before, after = info["base"], info["before"], info["after"]
         if not info["pushed"]:
             print(f"  {r}: was not pushed, nothing to undo")

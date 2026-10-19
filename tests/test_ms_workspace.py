@@ -49,13 +49,16 @@ def run(cmd, cwd=None, env=None, input=None):
 class WS:
     """A temporary workspace with bare remotes and clones on branch `next`."""
 
-    def __init__(self, repos=("lib", "app"), toml=DEFAULT_TOML):
+    def __init__(self, repos=("lib", "app"), toml=DEFAULT_TOML, dynamia=False):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name).resolve()
-        self.root = self.tmp / "ws"
+        self.project = self.tmp / "ws"
+        # dynamia=True is the .dynamia/ layout: workspace.toml in .dynamia/, clones and state in .dynamia/workspace/
+        self.root = self.project / ".dynamia" / "workspace" if dynamia else self.project
+        self.cfg = self.project / ".dynamia" / "workspace.toml" if dynamia else self.root / "workspace.toml"
         self.home = self.tmp / "home"
         self.cache = self.tmp / "cache"
-        self.root.mkdir()
+        self.root.mkdir(parents=True)
         self.home.mkdir()
         self.env = {
             **{k: v for k, v in os.environ.items() if not k.startswith(("MS_", "GIT_"))},
@@ -76,7 +79,7 @@ class WS:
             self.commit(self.root / r, "init")
             self.git(self.root / r, "push", "-q", "origin", "next")
         if toml is not None:
-            (self.root / "workspace.toml").write_text(textwrap.dedent(toml))
+            self.cfg.write_text(textwrap.dedent(toml))
 
     def close(self):
         self._tmp.cleanup()
@@ -103,7 +106,7 @@ class WS:
         return run([sys.executable, BIN, *args], cwd=cwd or self.root, env={**self.env, **(env or {})}, input=input)
 
     def set_toml(self, text):
-        (self.root / "workspace.toml").write_text(textwrap.dedent(text))
+        self.cfg.write_text(textwrap.dedent(text))
 
     def batch(self, name="b1", *repos):
         r = self.ms("batch", "new", name, *repos)
@@ -585,6 +588,120 @@ class TestOverview(Base):
         self.assertIn("unknown command", r.stderr)
 
 
+# ------------------------------------------------- .dynamia/ layout, repo detection
+class TestDynamiaLayout(unittest.TestCase):
+    def tearDown(self):
+        self.ws.close()
+
+    def assertOk(self, r):
+        self.assertEqual(r.returncode, 0, f"stdout={r.stdout!r} stderr={r.stderr!r}")
+
+    def single_repo(self):
+        """A project that is itself a git repo (branch next, with a remote); the workspace lives in its .dynamia/."""
+        self.ws = WS(repos=(), toml=None, dynamia=True)
+        proj = self.ws.project
+        remote = self.ws.tmp / "remote-proj.git"
+        self.ws.git(self.ws.tmp, "init", "-q", "--bare", str(remote))
+        self.ws.git(remote, "symbolic-ref", "HEAD", "refs/heads/next")
+        self.ws.git(proj, "init", "-q", "-b", "next")
+        self.ws.git(proj, "remote", "add", "origin", str(remote))
+        self.ws.commit(proj, "init", {"a.txt": "base\n", "CLAUDE.md": "# The repo's own notes\n"})
+        self.ws.git(proj, "push", "-q", "origin", "next")
+        self.ws.set_toml("""
+            name = "solo"
+            [repos.proj]
+            base = "next"
+            path = "."
+            [repos.proj.test]
+            unit = "echo unit-proj"
+        """)
+        return proj
+
+    def test_multi_repo_workspace_found_from_the_project_folder_and_from_a_batch(self):
+        self.ws = WS(dynamia=True)
+        self.assertEqual(self.ws.root, self.ws.project / ".dynamia" / "workspace")
+        self.assertOk(self.ws.ms("status", cwd=self.ws.project))
+        d = self.ws.batch("b1", "lib")
+        self.assertEqual(d, self.ws.root / ".batches" / "b1")
+        r = self.ws.ms("status", cwd=d / "lib")
+        self.assertOk(r)
+        self.assertIn("lib", r.stdout)
+
+    def test_guard_blocks_push_inside_a_batch_of_the_new_layout(self):
+        self.ws = WS(dynamia=True)
+        d = self.ws.batch("b1", "lib")
+        payload = json.dumps({"tool_input": {"command": "git push origin next"}, "cwd": str(d / "lib")})
+        r = run([BIN, "guard"], cwd=d / "lib", env=self.ws.env, input=payload)
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_single_repo_batch_is_a_worktree_inside_the_ignored_dynamia_folder(self):
+        proj = self.single_repo()
+        self.assertIn("added", self.ws.ms("exclude", cwd=proj).stdout)
+        self.assertIn("present", self.ws.ms("exclude", cwd=proj).stdout, "idempotent")
+        self.assertEqual((proj / ".git" / "info" / "exclude").read_text().count(".dynamia/"), 1)
+        d = self.ws.batch("b1", "proj")
+        wt = d / "proj"
+        self.assertTrue((wt / "a.txt").is_file())
+        self.assertEqual(self.ws.git(proj, "status", "--short"), "", "the repo stays clean")
+        self.assertEqual(self.ws.git(wt, "status", "--short"), "", "so does the worktree")
+        self.assertFalse((wt / ".dynamia").exists())
+        self.assertOk(self.ws.ms("status", cwd=proj))
+        r = self.ws.ms("test", "t0", cwd=proj)
+        self.assertOk(r)
+        self.assertIn("unit-proj", r.stdout + r.stderr)
+
+    def test_project_reports_repo_workspace_and_claude_md(self):
+        proj = self.single_repo()
+        info = json.loads(self.ws.ms("project", cwd=proj).stdout)
+        self.assertTrue(info["in_repo"])
+        self.assertEqual(info["workspace"], "new")
+        self.assertEqual(info["claude_md"], {"exists": True, "managed": False})
+        self.assertFalse(info["excluded"])
+        self.ws.ms("exclude", cwd=proj)
+        self.assertTrue(json.loads(self.ws.ms("project", cwd=proj).stdout)["excluded"])
+        outside = self.ws.tmp / "plain"
+        outside.mkdir()
+        info = json.loads(self.ws.ms("project", cwd=outside).stdout)
+        self.assertFalse(info["in_repo"])
+        self.assertEqual(info["workspace"], "none")
+        self.assertIsNone(info["excluded"])
+
+    def test_exclude_outside_a_repo_fails(self):
+        self.ws = WS(repos=(), toml=None)
+        r = self.ws.ms("exclude", cwd=self.ws.tmp)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not inside a git repository", r.stderr)
+
+    def test_claude_md_of_the_repo_is_respected_until_the_user_agrees(self):
+        proj = self.single_repo()
+        r = self.ws.ms("claude-md", cwd=proj)
+        self.assertEqual(r.returncode, 3)
+        self.assertEqual((proj / "CLAUDE.md").read_text(), "# The repo's own notes\n")
+        self.assertOk(self.ws.ms("claude-md", "--append", cwd=proj))
+        text = (proj / "CLAUDE.md").read_text()
+        self.assertTrue(text.startswith("# The repo's own notes\n"))
+        self.assertIn("ms-workspace:begin", text)
+        self.assertFalse((proj / ".dynamia" / "workspace" / "CLAUDE.md").exists())
+        self.assertIn("Updated", self.ws.ms("claude-md", cwd=proj).stdout, "once managed, it refreshes without asking")
+
+    def test_migrate_moves_the_older_layout_and_refuses_open_batches(self):
+        self.ws = WS()
+        self.ws.batch("b1", "lib")
+        r = self.ws.ms("migrate", "--yes")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("open batches", r.stderr)
+        self.assertOk(self.ws.ms("clean", "b1", "--force"))
+        dry = self.ws.ms("migrate")
+        self.assertIn("would move", dry.stdout)
+        self.assertTrue((self.ws.root / "workspace.toml").exists(), "a dry run moves nothing")
+        self.assertOk(self.ws.ms("migrate", "--yes"))
+        new = self.ws.project / ".dynamia"
+        self.assertTrue((new / "workspace.toml").is_file())
+        self.assertTrue((new / "workspace" / "lib" / ".git").exists())
+        self.assertFalse((self.ws.project / "lib").exists())
+        self.assertOk(self.ws.ms("status", cwd=self.ws.project))
+
+
 # ------------------------------------------------------------------ claude-md
 class TestClaudeMd(Base):
     def test_create_content_and_order(self):
@@ -614,7 +731,10 @@ class TestClaudeMd(Base):
     def test_appends_block_to_an_existing_file_without_markers(self):
         p = self.ws.root / "CLAUDE.md"
         p.write_text("# Hand written\n")
-        self.assertIn("Appended", self.ws.ms("claude-md").stdout)
+        refused = self.ws.ms("claude-md")
+        self.assertEqual(refused.returncode, 3)
+        self.assertEqual(p.read_text(), "# Hand written\n", "an existing file is left alone until the user agrees")
+        self.assertIn("Appended", self.ws.ms("claude-md", "--append").stdout)
         text = p.read_text()
         self.assertTrue(text.startswith("# Hand written"))
         self.assertIn("ms-workspace:end", text)

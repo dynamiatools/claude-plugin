@@ -7,7 +7,7 @@ from .core import MsError, Workspace
 
 USAGE = """\
 ms-workspace: mechanical helper for the multi-repo batch workflow.
-Reads <workspace>/workspace.toml (created by the dynamia:workspace-init skill).
+Reads <project>/.dynamia/workspace.toml (created by the dynamia:workspace-init skill).
 Deterministic on purpose: skills and hooks call it so the model does not
 have to spend tokens on git/test plumbing.
 
@@ -28,12 +28,15 @@ Usage:
   ms-workspace log [-n N] [--day YYYY-MM-DD] [--action A]   show recent actions
   ms-workspace context                       ~15-line briefing (for a SessionStart hook)
   ms-workspace status [--fetch]              one line per repo: branch, ahead/behind base, dirty, batches
-  ms-workspace claude-md [--print]           (re)generate <workspace>/CLAUDE.md; only the managed block is touched
+  ms-workspace claude-md [--print]           (re)generate <project>/CLAUDE.md; only the managed block is touched; an existing file needs --append
   ms-workspace usage [--check] [--need PCT] [--json|--line]   plan usage: 5h session and 7d week, pace, verdict
   ms-workspace images [list|capture|backfill]   archive images pasted in chat into <workspace>/.ms-workspace/images/
   ms-workspace memory [add|list|search|show|forget]   small local notes: decisions, lessons, gotchas, handoffs
   ms-workspace insights [--days N] [--json]  what the log says: slow/flaky tests, time and plan usage per batch
   ms-workspace tokens [--days N] [--json]    token audit of the Claude Code sessions run inside this workspace
+  ms-workspace project [dir]                 JSON: inside a git repo? workspace layout? CLAUDE.md the repo's own?
+  ms-workspace exclude [dir]                 add .dynamia/ to the repo's .git/info/exclude (local, nothing tracked)
+  ms-workspace migrate [--yes]               move an older-layout workspace into .dynamia/ (dry run without --yes)
   ms-workspace setup-hooks [--dry-run] [--remove] [--project]   merge the ms-* hooks and status line into settings.json
   ms-workspace budget [--top N] [--json]     what every session loads before you type (CLAUDE.md, skills, agents, memory), in tokens
   ms-workspace readguard / outguard          token-saving hooks: warn on re-reading an unchanged file; shorten huge Bash output
@@ -53,7 +56,7 @@ Usage:
   ms-workspace doctor                        check tools, versions, resources and workspace.toml
   ms-workspace guard                         PreToolUse hook: blocks git push / gh pr create|merge in batch worktrees
 
-Workspace discovery: $MS_WORKSPACE, else the nearest parent holding workspace.toml.
+Workspace discovery: $MS_WORKSPACE, else the nearest parent holding .dynamia/workspace.toml (or, older layout, workspace.toml).
 """
 
 
@@ -134,6 +137,9 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd == "budget":
         from .budget import cmd_budget
         return cmd_budget(Workspace.load(required=False), args)
+    if cmd in ("project", "exclude", "migrate"):
+        from . import project
+        return {"project": project.cmd_project, "exclude": project.cmd_exclude, "migrate": project.cmd_migrate}[cmd](args)
     if cmd == "setup-hooks":
         from .setup import cmd_setup_hooks
         return cmd_setup_hooks(args)

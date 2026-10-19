@@ -38,7 +38,7 @@ To remove: `/dynamia:setup --remove` (undoes the three), then `/plugin uninstall
 
 ## Use it
 
-1. `/dynamia:workspace-init`: builds a workspace from scratch (asks which repos, clones them, detects stacks, writes `workspace.toml` and a workspace `CLAUDE.md`).
+1. `/dynamia:workspace-init`: builds a workspace in `.dynamia/` (inside a repo it makes a one-repo workspace and ignores the folder locally; otherwise it asks which repos, clones them, detects stacks, writes `workspace.toml`; an existing `CLAUDE.md` is respected).
 2. `/dynamia:batch`: opens a batch of local work, one isolated worktree per repo. Work in it, optionally with parallel agents.
 3. `/dynamia:test`: runs t0 (what changed), t1 (the whole batch) or t2 (end to end) and triages failures.
 4. `/dynamia:integrate`: merges the agents' branches and runs t1.
@@ -123,7 +123,7 @@ Names are validated, and a failed `batch new` or `agent new` rolls back what it 
 ## Observability
 
 - **`context`** (SessionStart hook) injects a short briefing: active batches, open tasks, plan usage, memory and handoffs, last actions. It prints nothing outside a workspace.
-- **`log [-n N] [--day D] [--action A]`**: one JSON line per action in `<workspace>/.ms-workspace/logs/`, one file per day, pruned after `log_retention_days` (default 14). Test events carry duration, a code hash and the plan usage at that moment.
+- **`log [-n N] [--day D] [--action A]`**: one JSON line per action in `<workspace>/.ms-workspace/logs/` (that is `.dynamia/workspace/` in the new layout), one file per day, pruned after `log_retention_days` (default 14). Test events carry duration, a code hash and the plan usage at that moment.
 - **`budget [--top N] [--json]`**: what every session loads before you type anything, in tokens (estimate: characters / 4, an upper bound): global and workspace `CLAUDE.md` plus their imports, unscoped rules, the name and description of every skill and agent, Claude's auto-memory index and what `context` injects, with hints for the biggest items. Path-scoped rules are listed as on-demand, and MCP servers are counted but their tool schemas are not measurable from files.
 - **`insights [--days N]`**: slow runs, flaky candidates (same code, both pass and fail), time per batch and an approximate plan cost per batch (usage jumps between a batch's events, so parallel work elsewhere is counted too).
 - **`tokens [--days N]`**: reads Claude Code's local transcripts for sessions run inside the workspace and reports requests, new input, cache reads and output per batch or repo, the tools whose results were largest (characters divided by 4), repeated reads of one file, and hints. Everything stays local.
@@ -206,7 +206,24 @@ Routes match top to bottom (method, `{param}` or trailing `*` path, optional `ma
 
 ## The workspace
 
-A workspace is a folder with several repos plus a `workspace.toml` (see `skills/workspace-init/references/workspace.example.toml` for every key). The folder that holds the file is the workspace root; batches live in `.batches/` and state in `.ms-workspace/`, both outside every repo.
+A workspace lives in a `.dynamia/` folder inside your project; the project folder keeps only `CLAUDE.md`:
+
+```
+<project>/
+├── CLAUDE.md
+└── .dynamia/
+    ├── workspace.toml      config (see skills/workspace-init/references/workspace.example.toml for every key)
+    └── workspace/          clones (multi-repo), .batches/, .ms-workspace/ (logs, memory, images), requests/, mocks/
+```
+
+`/dynamia:workspace-init` first checks where you are (`ms-workspace project`):
+- **Inside a git repo**: a one-repo workspace. The repo is the project folder (`path = "."` in `workspace.toml`), and `.dynamia/` is added to the repo's `.git/info/exclude` (`ms-workspace exclude`): local to this clone, nothing tracked, and shared by every worktree, so the repo and its batch worktrees stay clean in `git status`. A new clone needs `ms-workspace exclude` once.
+- **Outside a repo**: a multi-repo workspace; the clones go to `.dynamia/workspace/<repo>`.
+- **The repo's own `CLAUDE.md` is respected**: it is never edited unasked. The skill asks whether to add the workspace block at the end (`ms-workspace claude-md --append`); with a block already there, only the block is refreshed.
+
+Older workspaces (`workspace.toml` and clones in one folder) keep working; `ms-workspace migrate` shows the move and `migrate --yes` applies it (it refuses while batches are open, because worktrees store absolute paths).
+
+Things to know in a one-repo workspace: `git clean -fdx` in the repo also deletes ignored files, so it would wipe `.dynamia/` (plain `-fd` is safe); and tools that scan the whole tree without reading `.git/info/exclude` (pytest, jest, an IDE indexer) can see the batch copies under `.dynamia/workspace/.batches/`, so exclude that folder there.
 
 ```toml
 name = "shop"

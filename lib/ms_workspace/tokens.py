@@ -23,11 +23,9 @@ def _target(name: str, inp: dict) -> str:
 
 def _scope(ws: Workspace, cwd: str) -> str | None:
     """'batch/repo' or 'repo' for a directory inside the workspace; None when outside."""
-    try:
-        rel = Path(cwd).resolve().relative_to(ws.root)
-    except ValueError:
+    parts = ws.rel_parts(cwd)
+    if parts is None:
         return None
-    parts = rel.parts
     if parts and parts[0] == ".batches" and len(parts) >= 3:
         repo = parts[4] if parts[2] == ".agents" and len(parts) >= 5 else parts[2]
         return f"{parts[1]}/{repo}"
@@ -144,7 +142,7 @@ def cmd_tokens(ws: Workspace, args: list[str]) -> int:
         print(json.dumps(a, separators=(",", ":")))
         return 0
     if not a["sessions"]:
-        print(f"No Claude Code sessions inside {ws.root} in the last {days:g} days.")
+        print(f"No Claude Code sessions inside {ws.project} in the last {days:g} days.")
         return 0
     t = a["total"]
     print(f"Token audit: last {days:g} days, {a['sessions']} sessions in '{ws.get('name', default='workspace')}'")
