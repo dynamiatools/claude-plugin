@@ -121,9 +121,19 @@ class Workspace:
             out[name] = value
         return out
 
+    def dev_env(self, repo: str) -> dict[str, str]:
+        """Development variables: [dev.env] for every repo, then [repos.<r>.dev.env] over it (see `dev-env`)."""
+        merged = {}
+        for table in (self.get("dev", "env", default={}), (self.repo_cfg(repo).get("dev") or {}).get("env")):
+            for name, value in (table or {}).items():
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name)):
+                    die(f"dev.env: '{name}' is not a valid variable name")
+                merged[str(name)] = str(value)
+        return merged
+
     def run_env(self, repo: str) -> dict[str, str] | None:
         """Process environment for a repo's commands (None = inherit unchanged)."""
-        extra = self.repo_env(repo)
+        extra = {**self.dev_env(repo), **self.repo_env(repo)}
         return {**os.environ, **extra} if extra else None
 
     def base(self, repo: str) -> str:

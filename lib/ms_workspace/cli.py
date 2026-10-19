@@ -34,6 +34,7 @@ Usage:
   ms-workspace memory [add|list|search|show|forget]   small local notes: decisions, lessons, gotchas, handoffs
   ms-workspace insights [--days N] [--json]  what the log says: slow/flaky tests, time and plan usage per batch
   ms-workspace tokens [--days N] [--json]    token audit of the Claude Code sessions run inside this workspace
+  ms-workspace dev-env [list|add NAME=value|rm NAME] [--repo R]   development variables in workspace.toml, applied to test/e2e/setup commands
   ms-workspace project [dir]                 JSON: inside a git repo? workspace layout? CLAUDE.md the repo's own?
   ms-workspace exclude [dir]                 add .dynamia/ to the repo's .git/info/exclude (local, nothing tracked)
   ms-workspace migrate [--yes]               move an older-layout workspace into .dynamia/ (dry run without --yes)
@@ -140,6 +141,9 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     if cmd in ("project", "exclude", "migrate"):
         from . import project
         return {"project": project.cmd_project, "exclude": project.cmd_exclude, "migrate": project.cmd_migrate}[cmd](args)
+    if cmd == "dev-env":
+        from .devenv import cmd_dev_env
+        return cmd_dev_env(Workspace.load(), args)
     if cmd == "setup-hooks":
         from .setup import cmd_setup_hooks
         return cmd_setup_hooks(args)
