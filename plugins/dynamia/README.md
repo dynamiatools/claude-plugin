@@ -49,7 +49,7 @@ To remove: `/dynamia:setup --remove` (undoes the three), then `/plugin uninstall
 ## Use it
 
 1. `/dynamia:workspace-init`: builds a workspace in `.dynamia/` (inside a repo it makes a one-repo workspace and ignores the folder locally; otherwise it asks which repos, clones them, detects stacks, writes `workspace.toml`; an existing `CLAUDE.md` is respected).
-2. `/dynamia:batch`: opens a batch of local work, one isolated worktree per repo. Work in it, optionally with parallel agents.
+2. `/dynamia:batch`: opens a batch of local work, one isolated worktree per repo. Work in it, optionally with parallel agents. The agent estimates whether a plain local branch is enough, recommends one option and asks you to choose: a small, single-repo task on a clean checkout that is on the base branch. A worktree gets priority when the repo is not on its base branch, the task is new, the checkout is dirty, or it spans repos; when unsure it uses a worktree. The plain-branch path has no `int/<batch>`, so `ship` does not apply to it.
 3. `/dynamia:test`: runs t0 (what changed), t1 (the whole batch) or t2 (end to end) and triages failures.
 4. `/dynamia:integrate`: merges the agents' branches and runs t1.
 5. `/dynamia:ship`: shows the plan, asks, syncs, tests and pushes (or opens a PR). Only when you ask.

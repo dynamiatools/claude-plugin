@@ -47,7 +47,8 @@ def render(ws: Workspace) -> str:
             "Publishing goes through `/dynamia:ship` (plan, confirmation, `ms-workspace ship`), and only when the user asks: "
             "\"open a PR\" means `ship --pr`; \"ship\" or \"publish\" uses each repo's configured push mode. If the plan says RECOMMEND A PR, tell the user and let them choose.",
             "- After changes run `ms-workspace test t0` (tests only what changed). Fix failures before saying you are done.",
-            "- Do not create branches or worktrees by hand; use `ms-workspace batch new` / `agent new`.",
+            "- Never create worktrees by hand; use `ms-workspace batch new` / `agent new`. /dynamia:batch recommends a worktree or a plain local branch in the repo and asks the user to choose "
+            "(worktree recommended when the repo is not on its base branch or the task is new; a plain branch only for a small, single-repo task on a clean checkout).",
             "- Before starting a task or session run `ms-workspace usage --check` (add `--need <pct>` with your estimate of the 5h-window share the task needs). "
             "Exit 1 or 2: show the numbers and get the user's confirmation first. Exit 3: no data, proceed. "
             "Never leave work half done: prefer finishing or cleanly stopping a small step.",

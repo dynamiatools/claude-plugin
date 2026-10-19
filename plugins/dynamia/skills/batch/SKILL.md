@@ -1,6 +1,6 @@
 ---
 name: batch
-description: Starts or inspects a batch of local work across the repos of a workspace. Creates isolated worktrees (one per repo, optionally one per agent) so changes never touch shared checkouts and nothing is pushed. Use when the user wants to start a feature or fix that spans repos, run several agents in parallel safely, or see which batches exist.
+description: Starts or inspects a batch of local work across the repos of a workspace. Creates isolated worktrees (one per repo, optionally one per agent) so changes never touch shared checkouts and nothing is pushed; for a small task it recommends a plain local branch instead and asks which the user prefers. Use when the user wants to start a feature or fix that spans repos, run several agents in parallel safely, or see which batches exist.
 argument-hint: "[batch-name]"
 allowed-tools: Bash(ms-workspace status:*) Bash(ms-workspace usage:*) Bash(ms-workspace batch new:*) Bash(ms-workspace agent new:*) Bash(ms-workspace memory:*)
 ---
@@ -13,6 +13,13 @@ Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/workin
 
 0. **Check plan usage first**: `ms-workspace usage --check`. Exit 0 or 3 (no data): continue. Exit 1 or 2: show the printed numbers and use `AskUserQuestion` (continue / do a smaller step / stop) before doing anything else. If the user stops mid-batch, leave a handoff first: `ms-workspace memory add --type handoff --batch <batch> "state, next step, files touched"`. Never start something that cannot be finished in the remaining window.
 1. **Orient cheaply.** Run `ms-workspace status` and `ms-workspace clean` (lists existing batches). If the user named an existing batch, skip to step 4.
+
+   **Worktree or a plain branch?** A worktree is the default, not a rule. From `status` (current branch and `vs <base>`, dirty count) and the request, estimate whether the task fits a plain local branch in the repo's own checkout, to make a recommendation. Weigh:
+   - Worktree gets priority when: the current branch is **not** the repo's base branch (the checkout already holds other work), the task is **new** (not a continuation of the branch you are on), the checkout is dirty, it spans several repos or modules, it needs parallel agents, or it is long or risky.
+   - A plain branch fits when all of these hold: one repo, small and well-bounded (a few files), the checkout is clean, and it is on the base branch or already on the branch of this same task.
+   - When unsure, recommend the worktree.
+   Never pick for the user: give the recommendation and its reason in one line, and ask with `AskUserQuestion` (worktree / plain branch, recommended option first). You can fold this into the question round of step 2.
+   If they choose the plain branch: `git switch -c <task-branch>` from the base branch (or stay on the task's branch), commit locally, run `ms-workspace test t0`, and skip steps 2-5. There is no `int/<batch>`, so `/dynamia:ship` does not apply: publishing stays the user's, and nothing is pushed from here.
 
 2. **Collect only what is missing** with one `AskUserQuestion` round:
    - Batch name (kebab-case; use `$ARGUMENTS` if given).
