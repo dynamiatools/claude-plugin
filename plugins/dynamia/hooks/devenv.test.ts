@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { parseNotes } from './views'
 import { addArgv, listArgv, parseAdd, parseListing, rmArgv } from './devenv'
 
 describe('dev-env helpers', () => {
@@ -46,5 +47,13 @@ describe('dev-env pane', () => {
       expect(await ui.find({ type: 'Text', text: /No variables yet/ })).toBeDefined()
       await ui.unmount()
     }
+  })
+})
+
+describe('memory panel helpers', () => {
+  test('parseNotes reads memory list lines and drops the rest', async () => {
+    const rows = parseNotes('decision  b1       Use SQLite for state  (20260101-000000-use-sqlite)\n(no notes)')
+    expect(rows).toEqual([{ type: 'decision', batch: 'b1', title: 'Use SQLite for state', name: '20260101-000000-use-sqlite' }])
+    expect(parseNotes('lesson    -        Plain title  (n1)')[0]?.batch).toBe('')
   })
 })

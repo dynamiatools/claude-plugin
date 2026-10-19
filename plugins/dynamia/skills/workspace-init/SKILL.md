@@ -71,7 +71,7 @@ what cannot be detected, and keep every question short.
 
 - **Update mode** must never overwrite user edits: read the current file, change
   only the requested keys, write it back.
-- **Task tracking**: `local` keeps tasks in a small `TASKS.md` inside the batch
+- **Task tracking**: `ask` makes the batch skill ask where each task list goes and confirm local ones. `local` keeps tasks in a small `TASKS.md` inside the batch
   folder, which agents read cheaply. `github` uses one tracking issue per
   batch (not per repo) to limit `gh` calls and tokens. Use it only when other
   people need visibility.

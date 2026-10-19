@@ -35,5 +35,5 @@ DEBUG = "1"
 5. **Report** with `ms-workspace dev-env list` (secret-looking values are shown as `***`; `--show` reveals them, use it only if the user asks).
 
 ## Notes
-- The `/env-panel` slash command of the plugin (panel with fields, or `/env-panel NAME=value [repo]`) does the same from the prompt.
+- The `/dynamia-env-panel` slash command of the plugin (panel with fields, or `/dynamia-env-panel NAME=value [repo]`) does the same from the prompt.
 - These variables are not added to the shell Claude uses for other commands, and not to `ship`.

@@ -401,6 +401,15 @@ class TestShip(Base):
         self.assertEqual(self.ws.remote_log("lib")[0], "lib feature")
         self.assertEqual(self.ws.remote_log("app")[0], "app feature")
 
+    def test_push_ask_needs_an_explicit_choice(self):
+        self.ws.set_toml((DEFAULT_TOML + self.E2E).replace('[repos.lib]\nbase = "next"', '[repos.lib]\nbase = "next"\npush = "ask"'))
+        r = self.ws.ms("ship", "b1", "--yes")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--direct", r.stderr)
+        self.assertNotIn("lib feature", self.ws.remote_log("lib"))
+        self.assertOk(self.ws.ms("ship", "b1", "--yes", "--direct"))
+        self.assertIn("lib feature", self.ws.remote_log("lib"))
+
     def test_missing_e2e_requires_explicit_skip(self):
         self.ws.set_toml(DEFAULT_TOML)
         r = self.ws.ms("ship", "b1", "--yes")
@@ -899,10 +908,32 @@ class TestClaudeMd(Base):
         self.assertIn("Small diffs.", text)
         self.assertIn("- app: github", text)
 
-    def test_default_tools_policy(self):
-        text = self.ws.ms("claude-md", "--print").stdout
-        self.assertIn("2. codebase-memory graph tools", text)
-        self.assertIn("rtk", text)
+    def test_default_tools_policy_lists_only_what_is_installed(self):
+        bare = tempfile.mkdtemp()
+        text = self.ws.ms_py("claude-md", "--print", env={"PATH": bare}).stdout
+        self.assertIn("1. Grep/Glob/Read", text)
+        self.assertNotIn("codebase-memory", text)
+        self.assertNotIn("IDE tools", text)
+        binary = Path(bare) / "codebase-memory-mcp"
+        binary.write_text("#!/bin/sh\n")
+        binary.chmod(0o755)
+        text = self.ws.ms_py("claude-md", "--print", env={"PATH": bare}).stdout
+        self.assertIn("1. codebase-memory graph tools", text)
+        self.assertIn("2. Grep/Glob/Read", text)
+
+    def test_refresh_rewrites_only_a_fully_generated_file(self):
+        p = self.ws.root / "CLAUDE.md"
+        self.assertIn("left untouched", self.ws.ms("claude-md", "--refresh").stdout)
+        self.assertFalse(p.exists(), "refresh never creates the file")
+        self.ws.ms("claude-md")
+        self.ws.set_toml(DEFAULT_TOML.replace('name = "t"', 'name = "renamed"'))
+        self.assertIn("Refreshed", self.ws.ms("claude-md", "--refresh").stdout)
+        self.assertIn("# Workspace: renamed", p.read_text())
+        mine = "# Mine\n\n" + p.read_text()
+        p.write_text(mine)
+        self.ws.set_toml(DEFAULT_TOML)
+        self.assertIn("left untouched", self.ws.ms("claude-md", "--refresh").stdout)
+        self.assertEqual(p.read_text(), mine)
 
 
 # ---------------------------------------------------------------------- usage
@@ -2026,7 +2057,7 @@ class TestGuardHardening(Base):
                     "FOO=1 git push", "sudo git push", "bash -c 'git push origin x'", 'eval "git push"', "git --no-pager push",
                     "echo hi | git push", "ls; git push", "/usr/bin/git push", "git -c user.name=x push", "gh pr merge 3",
                     "gh api repos/o/r/issues -f title=x", "gh api -X POST repos/o/r/issues", "gh release create v1",
-                    "ms-workspace setup-hooks", "ms-workspace env b1 --setup", "ms-workspace undo b1 --yes",
+                    "ms-workspace setup-hooks", "ms-workspace env b1 --trust", "ms-workspace undo b1 --yes",
                     "rtk git push", "rtk proxy git push origin x", "rtk gh pr create"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.guard(cmd, d / "lib").returncode, 2, cmd)
@@ -2041,7 +2072,7 @@ class TestGuardHardening(Base):
         d = self.ws.batch("b1")
         for cmd in ("git status", "git log --oneline", "git pull", "git fetch", "git commit -m 'fix push handling'", "git diff | head",
                     "gh pr view 3", "gh api repos/o/r/pulls", "gh issue view 1", "echo git push", "grep -r push src",
-                    "git checkout -b feature/push-fix", "rtk git status", "rtk gh pr view 3", "ms-workspace test t0", "ms-workspace env b1", "unterminated 'quote"):
+                    "git checkout -b feature/push-fix", "rtk git status", "rtk gh pr view 3", "ms-workspace test t0", "ms-workspace env b1", "ms-workspace env b1 --setup", "unterminated 'quote"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.guard(cmd, d / "lib").returncode, 0, cmd)
 

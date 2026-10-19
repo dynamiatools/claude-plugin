@@ -66,7 +66,8 @@ do_install() { case "$1" in
   rtk)             remote_script https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh sh
                    say "  next     rtk init -g   (installs the Claude Code hook; then restart Claude Code)" ;;
   codebase-memory) remote_script https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh bash
-                   say "  next     restart Claude Code and check /mcp" ;;
+                   say "  next     restart Claude Code and check /mcp"
+                   say "  next     ms-workspace claude-md --refresh   (updates a generated workspace CLAUDE.md only; yours is never touched)" ;;
   graphify)        step "install package" uv tool install graphifyy \
                    && step "register skill" graphify install
                    say "  next     in Claude Code run: /graphify ." ;;
@@ -78,7 +79,8 @@ esac; }
 do_remove() { case "$1" in
   uv)              say "  manual   uv has no uninstall command; delete ~/.local/bin/uv and ~/.local/bin/uvx yourself" ;;
   rtk)             say "  manual   rtk documents no uninstall; remove its hook from ~/.claude/settings.json and delete $(command -v rtk)" ;;
-  codebase-memory) step "uninstall" codebase-memory-mcp uninstall ;;
+  codebase-memory) step "uninstall" codebase-memory-mcp uninstall \
+                   && say "  next     ms-workspace claude-md --refresh   (updates a generated workspace CLAUDE.md only; yours is never touched)" ;;
   graphify)        step "unregister" graphify uninstall \
                    && step "remove package" uv tool uninstall graphifyy ;;
   headroom)        step "unwrap" headroom unwrap claude \

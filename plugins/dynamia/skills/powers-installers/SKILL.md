@@ -21,7 +21,7 @@ Tools: `uv`, `rtk`, `codebase-memory`, `graphify`, `headroom`. `graphify` and `h
 1. For a status question run `list` or `doctor` and answer from it.
 2. To install or remove, run the command **without** `--yes` and show the plan. Say which tools are downloaded from the internet and that each installer's sha256 is printed before it runs.
 3. Ask the user to approve (`AskUserQuestion`). Only then re-run with `--yes`. Approval for one tool does not cover another.
-4. Repeat the `next` lines the script prints (for example `rtk init -g`, restart Claude Code); those edit settings and are not run for you.
+4. Repeat the `next` lines the script prints (for example `rtk init -g`, restart Claude Code); those edit settings and are not run for you. After `codebase-memory`, offer `ms-workspace claude-md --refresh`: it rewrites the workspace `CLAUDE.md` only when that file is entirely generated, and leaves any CLAUDE.md with the user's own text alone.
 5. Finish with `doctor` and quote its line for the tool.
 
 ## Notes

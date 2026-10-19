@@ -3,6 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { DevVar, Draft } from '../types'
 import { addArgv, listArgv, parseAdd, parseListing, rmArgv } from './devenv'
+import { registerPanels } from './panels'
 
 const vars = atom({ plugin: 'dynamia', key: 'vars' } as const, [] as DevVar[])
 const repos = atom({ plugin: 'dynamia', key: 'repos' } as const, [] as string[])
@@ -47,23 +48,25 @@ async function add($: EngineInterface) {
 }
 
 export const register: Register = on => {
+  registerPanels(on)
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
-      name: 'env-panel',
-      description: 'Development variables of the workspace: a panel, or env-panel NAME=value [repo], rm NAME [repo], list',
+      name: 'dynamia-env-panel',
+      description: 'Development variables of the workspace: a panel, or dynamia-env-panel NAME=value [repo], rm NAME [repo], list',
     })
 
     return next(e)
   })
 
-  on('command.run', { command: 'env-panel' }, async ($, e) => {
+  on('command.run', { command: 'dynamia-env-panel' }, async ($, e) => {
     const args = e.args.trim()
     const root = $.plugin.root
     if (args === '') {
       await refresh($)
-      await $.ui.open({ id: 'dev-env', title: 'Dev env', focus: true })
+      await $.ui.open({ id: 'dev-env', title: 'Dynamia env', focus: true })
 
-      return { text: 'Dev env panel opened.' }
+      return { text: 'Dynamia env panel opened.' }
     }
     if (args === 'list') {
       const out = await tool($, [`${root}/bin/ms-workspace`, 'dev-env', 'list'])
@@ -79,7 +82,7 @@ export const register: Register = on => {
     }
     await refresh($)
     const parsed = parseAdd(args, await read($, repos))
-    if (!parsed) return { text: 'Usage: env-panel NAME=value [repo] | rm NAME [repo] | list' }
+    if (!parsed) return { text: 'Usage: dynamia-env-panel NAME=value [repo] | rm NAME [repo] | list' }
     const out = await tool($, addArgv(root, parsed))
     await refresh($)
 
@@ -125,25 +128,42 @@ export const register: Register = on => {
     const room = Math.max(1, (e.viewport?.rows ?? 24) - 9)
     const options = [{ value: ALL, label: 'all repos' }, ...names.map(name => ({ value: name, label: name }))]
 
+    const width = Math.min(32, Math.max(8, ...list.map(v => v.name.length)))
+    const scopes = [...new Set(list.map(v => v.scope))]
+    const shown = list.slice(0, room)
+
     return (
-      <Box flexDirection="column">
-        <Text dimColor>Development only. Saved in workspace.toml, plain text.</Text>
-        {list.length === 0 && <Text dimColor>No variables yet.</Text>}
-        {list.slice(0, room).map(v => (
-          <Box flexDirection="row" gap={1}>
-            <Text dimColor>{v.scope}</Text>
-            <Text>
-              {v.name}={v.value}
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="column">
+          <Text bold>Development variables</Text>
+          <Text dimColor>Saved in workspace.toml as plain text. Not for production secrets.</Text>
+        </Box>
+        {list.length === 0 && <Text dimColor>No variables yet. Add the first one below.</Text>}
+        {scopes.map(scope => (
+          <Box key={scope} flexDirection="column">
+            <Text bold color="cyan">
+              {scope}
             </Text>
-            <Button key={`rm:${v.scope}:${v.name}`} label="remove" onPress={() => {}} />
+            {shown
+              .filter(v => v.scope === scope)
+              .map(v => (
+                <Box key={`${scope}:${v.name}`} flexDirection="row" gap={1}>
+                  <Button key={`rm:${v.scope}:${v.name}`} label="✕" onPress={() => {}} />
+                  <Text>{v.name.padEnd(width)}</Text>
+                  <Text dimColor>{v.secret ? '••••••••' : v.value}</Text>
+                </Box>
+              ))}
           </Box>
         ))}
-        {list.length > room && <Text dimColor>{list.length - room} more: /env-panel list</Text>}
-        <Input key="name" label="NAME" placeholder="API_URL" value={d.name} onSubmit={() => {}} />
-        <Input key="value" label="value" placeholder="http://localhost:8080" value={d.value} onSubmit={() => {}} submitLabel="add" />
-        {names.length > 0 && <Select key="repo" label="for" options={options} value={d.repo || ALL} onSelect={() => {}} />}
-        <Button key="add" label="Add" variant="primary" onPress={() => {}} />
-        {note !== '' && <Text dimColor>{note}</Text>}
+        {list.length > room && <Text dimColor>{list.length - room} more: /dynamia-env-panel list</Text>}
+        <Box flexDirection="column">
+          <Text bold>Add a variable</Text>
+          <Input key="name" label="NAME " placeholder="API_URL" value={d.name} onSubmit={() => {}} />
+          <Input key="value" label="value" placeholder="http://localhost:8080" value={d.value} onSubmit={() => {}} submitLabel="add" />
+          {names.length > 0 && <Select key="repo" label="for  " options={options} value={d.repo || ALL} onSelect={() => {}} />}
+          <Button key="add" label="Add" variant="primary" onPress={() => {}} />
+        </Box>
+        {note !== '' && <Text color="yellow">{note}</Text>}
       </Box>
     )
   })
