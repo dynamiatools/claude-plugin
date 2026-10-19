@@ -1,9 +1,12 @@
 {
   "name": "dynamia",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "author": {
     "name": "Mario Serrano"
   },
   "description": "Multi-repo workspace tools for Claude Code: batches, worktrees, tests, ship, memory, guard hooks and cheap helper agents.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugin",
+  "repository": "https://github.com/dynamiatools/claude-plugin",
   "types": "./types/index.d.ts"
 }

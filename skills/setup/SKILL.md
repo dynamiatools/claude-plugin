@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Finishes the dynamia install, the part a plugin cannot do itself, namely the status line and permissions in settings.json, the global instructions block in ~/.claude/CLAUDE.md, and the ms-workspace and ms-statusline links in ~/.local/bin. It merges without overwriting your entries. Use right after installing the plugin, after a plugin update, or when any of those is missing.
+description: Finishes the dynamia install, the part a plugin cannot do itself, namely the status line and permissions in settings.json, the global instructions in ~/.claude/DYNAMIA.md imported from ~/.claude/CLAUDE.md, and the ms-workspace and ms-statusline links in ~/.local/bin. It merges without overwriting your entries. Use right after installing the plugin, after a plugin update, or when any of those is missing.
 argument-hint: "[--project] [--remove]"
 disable-model-invocation: true
 allowed-tools: Bash(ms-workspace doctor:*), Bash(ms-workspace --help:*)
@@ -8,7 +8,7 @@ allowed-tools: Bash(ms-workspace doctor:*), Bash(ms-workspace --help:*)
 
 # dynamia:setup
 
-A plugin ships skills, agents, hooks and `bin/`, but it cannot set `statusLine` or `permissions`, load a global `CLAUDE.md` or put tools in your shell PATH. This skill does that part: it merges `settings/hooks.example.json` into a settings file and, with `--global`, adds the plugin's `CLAUDE.md` to `~/.claude/CLAUDE.md` as a block between `dynamia:begin/end` markers (the rest of your file stays untouched; a backup is written first; a link to the repo file is replaced, never written through) and links `ms-workspace` and `ms-statusline` into `~/.local/bin`. The merge is idempotent, keeps every other hook, permission and setting, keeps a status line that someone else configured, and writes a timestamped backup before changing anything.
+A plugin ships skills, agents, hooks and `bin/`, but it cannot set `statusLine` or `permissions`, load a global `CLAUDE.md` or put tools in your shell PATH. This skill does that part: it merges `settings/hooks.example.json` into a settings file and, with `--global`, copies the plugin's `CLAUDE.md` to `~/.claude/DYNAMIA.md` and adds an `@DYNAMIA.md` import line to `~/.claude/CLAUDE.md` between `dynamia:begin/end` markers (the rest of your file stays untouched; a backup is written first; a link to the repo file is replaced, never written through) and links `ms-workspace` and `ms-statusline` into `~/.local/bin`. The merge is idempotent, keeps every other hook, permission and setting, keeps a status line that someone else configured, and writes a timestamped backup before changing anything.
 
 Scope: `~/.claude/settings.json` by default, or the current project's `.claude/settings.json` with `--project`.
 
@@ -25,7 +25,7 @@ Scope: `~/.claude/settings.json` by default, or the current project's `.claude/s
 5. **Verify**: `ms-workspace doctor | sed -n '/Hooks:/,/Plan usage:/p'` and remind the user to start a new Claude Code session, because hooks load at session start.
 
 ## Notes
-- The status line, the `~/.local/bin` links and the CLAUDE.md block point into the plugin folder, which holds the version: run this skill again after `/plugin update`.
+- The status line, the `~/.local/bin` links and the DYNAMIA.md copy come from the plugin folder, which holds the version: run this skill again after `/plugin update`.
 - If `~/.local/bin` is not in PATH the report says so; tell the user to add it to the shell profile.
 - To undo: `ms-workspace setup-hooks --remove`; it removes only what this tool added.
 - If settings.json is not valid JSON the command stops without touching it; show the error and ask the user to fix the file.

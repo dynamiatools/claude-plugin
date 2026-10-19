@@ -1473,12 +1473,14 @@ class TestSetupHooks(Base):
         text = md.read_text()
         self.assertTrue(text.startswith("# Mine\nkeep me\n"))
         self.assertIn("<!-- dynamia:begin", text)
-        self.assertIn((REPO / "CLAUDE.md").read_text().strip(), text)
+        self.assertIn("\n@DYNAMIA.md\n", text)
+        self.assertNotIn("Global instructions", text, "the text lives in DYNAMIA.md, not in CLAUDE.md")
+        self.assertEqual((self.home / "DYNAMIA.md").read_text(), (REPO / "CLAUDE.md").read_text())
         self.assertEqual((self.bin / "ms-workspace").resolve(), (REPO / "bin" / "ms-workspace").resolve())
         self.assertTrue(list(self.home.glob("CLAUDE.md.bak-*")), "the old file is backed up")
         again = self.global_setup()
         self.assertEqual(md.read_text(), text, "idempotent")
-        self.assertIn("present  dynamia block", again.stdout)
+        self.assertIn("present  dynamia import", again.stdout)
 
     def test_global_never_writes_through_a_link_to_the_repo_file(self):
         self.home.mkdir(parents=True)
@@ -1498,7 +1500,17 @@ class TestSetupHooks(Base):
         self.assertOk(self.global_setup())
         self.assertOk(self.global_setup("--remove"))
         self.assertEqual((self.home / "CLAUDE.md").read_text(), "# Mine\n")
+        self.assertFalse((self.home / "DYNAMIA.md").exists())
         self.assertFalse((self.bin / "ms-workspace").exists())
+
+    def test_global_turns_an_old_full_text_block_into_an_import(self):
+        self.home.mkdir(parents=True)
+        (self.home / "CLAUDE.md").write_text("# Mine\n\n<!-- dynamia:begin (managed by /dynamia:setup; edit outside this block) -->\nold full text\n<!-- dynamia:end -->\n\n# After\n")
+        self.assertOk(self.global_setup())
+        text = (self.home / "CLAUDE.md").read_text()
+        self.assertNotIn("old full text", text)
+        self.assertIn("@DYNAMIA.md", text)
+        self.assertTrue(text.startswith("# Mine\n") and text.endswith("# After\n"))
 
     def test_global_keeps_a_real_file_in_the_bin_dir(self):
         self.home.mkdir(parents=True)

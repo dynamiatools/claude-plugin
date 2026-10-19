@@ -136,6 +136,7 @@ def remove(settings: dict, src: dict) -> list[str]:
 
 MD_BEGIN = "<!-- dynamia:begin (managed by /dynamia:setup; edit outside this block) -->"
 MD_END = "<!-- dynamia:end -->"
+MD_FILE = "DYNAMIA.md"
 BIN_NAMES = ("ms-workspace", "ms-statusline")
 
 
@@ -154,29 +155,44 @@ def _backup(path: Path, report: list[str]) -> None:
 
 
 def global_md(root: Path, dry: bool, undo: bool) -> list[str]:
-    """Put the repo's global instructions in ~/.claude/CLAUDE.md as a marked block; the rest of the file is yours."""
-    target, report = claude_home() / "CLAUDE.md", []
-    block = f"{MD_BEGIN}\n{(root / 'CLAUDE.md').read_text().rstrip()}\n{MD_END}\n"
+    """Copy the repo's global instructions to ~/.claude/DYNAMIA.md and import them from ~/.claude/CLAUDE.md with one
+    @DYNAMIA.md line inside a marked block; the rest of CLAUDE.md is yours. The copy keeps the import path stable across plugin updates."""
+    home = claude_home()
+    target, doc, report = home / "CLAUDE.md", home / MD_FILE, []
+    block = f"{MD_BEGIN}\n@{MD_FILE}\n{MD_END}"
+    source = (root / "CLAUDE.md").read_text()
     linked = target.is_symlink()  # install.sh linked it to the repo file: never write through it
     text = target.read_text() if target.exists() else ""
     a, b = text.find(MD_BEGIN), text.find(MD_END)
     if (a == -1) != (b == -1) or b < a:
         die(f"{target} has a dynamia block start without an end marker (or the reverse); fix it by hand")
-    if linked and text == (root / "CLAUDE.md").read_text():
+    if linked and text == source:
         text, a, b = "", -1, -1  # a copy of our own file: the block replaces it
     if undo:
+        if doc.exists():
+            report.append(f"removed  {doc}")
+            if not dry:
+                doc.unlink()
         if a == -1:
-            return ["present  no dynamia block in CLAUDE.md (nothing to remove)"]
+            return report + ["present  no dynamia block in CLAUDE.md (nothing to remove)"]
         new = (text[:a] + text[b + len(MD_END):].lstrip("\n")).rstrip() + "\n"
         report.append("removed  dynamia block from CLAUDE.md")
-    elif a != -1:
-        if text[a:b + len(MD_END)] + "\n" == block or text[a:b + len(MD_END)] == block.rstrip("\n"):
-            return ["present  dynamia block in CLAUDE.md"]
-        new = text[:a] + block.rstrip("\n") + text[b + len(MD_END):]
-        report.append("updated  dynamia block in CLAUDE.md")
     else:
-        new = text + ("" if not text or text.endswith("\n") else "\n") + ("\n" if text else "") + block
-        report.append("added    dynamia block in CLAUDE.md" + (" (your content kept above it)" if text else ""))
+        if doc.exists() and doc.read_text() == source:
+            report.append(f"present  {doc}")
+        else:
+            report.append(f"{'updated' if doc.exists() else 'added  '}  {doc}")
+            if not dry:
+                doc.parent.mkdir(parents=True, exist_ok=True)
+                doc.write_text(source)
+        if a != -1:
+            if text[a:b + len(MD_END)] == block:
+                return report + ["present  dynamia import in CLAUDE.md"]
+            new = text[:a] + block + text[b + len(MD_END):]
+            report.append("updated  dynamia block in CLAUDE.md (now an import)")
+        else:
+            new = text + ("" if not text or text.endswith("\n") else "\n") + ("\n" if text else "") + block + "\n"
+            report.append("added    dynamia import in CLAUDE.md" + (" (your content kept above it)" if text else ""))
     if not dry:
         if target.exists() or linked:
             if linked:
