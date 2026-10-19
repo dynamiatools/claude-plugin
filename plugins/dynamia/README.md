@@ -254,7 +254,7 @@ command = "docker compose -f e2e/docker-compose.yml up --abort-on-container-exit
 repo = "erp"
 ```
 
-`ms-workspace claude-md` generates `<workspace>/CLAUDE.md` (repos in dependency order, agent rules, the flow, token and tool guidance, taken from `[tools]`). Only the block between the `ms-workspace:begin/end` markers is managed, so your notes around it survive every regeneration. Without `[tools] discovery` the tool list names only what is installed (the graph when `codebase-memory-mcp` is on `PATH`, then Grep/Glob/Read); the IDE tools appear only if you list them. `claude-md --refresh` (offered after installing or removing `codebase-memory`) rewrites the file only when it is entirely generated; a CLAUDE.md with your own text is never touched.
+`ms-workspace claude-md` generates `<workspace>/CLAUDE.md` (repos in dependency order, agent rules, the flow, token and tool guidance, taken from `[tools]`). Only the block between the `ms-workspace:begin/end` markers is managed, so your notes around it survive every regeneration. The Tasks section also tells agents to use the DynamiaTasks MCP (`mcp__dynamia-tasks__*`, [dynamiatools/dynamia-tasks](https://github.com/dynamiatools/dynamia-tasks), in development) when it is available; without it nothing changes. Without `[tools] discovery` the tool list names only what is installed (the graph when `codebase-memory-mcp` is on `PATH`, then Grep/Glob/Read); the IDE tools appear only if you list them. `claude-md --refresh` (offered after installing or removing `codebase-memory`) rewrites the file only when it is entirely generated; a CLAUDE.md with your own text is never touched.
 
 ## Development environment variables
 
