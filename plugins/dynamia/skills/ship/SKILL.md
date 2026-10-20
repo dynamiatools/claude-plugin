@@ -1,13 +1,15 @@
 ---
 name: ship
-description: Publishes a validated batch to each repo's base branch (direct push or PR, per workspace.toml) after syncing with the remote, re-running the incremental tests and the end-to-end command. Use when the user explicitly asks to ship, publish or push a batch, or to open a pull request (PR) for it; "open a PR" means ship with --pr. Never on your own initiative.
-argument-hint: "<batch-name> [--pr|--direct]"
+description: Publishes a validated batch, or the plain local branch of a repo, to each repo's base branch (direct push or PR, per workspace.toml) after syncing with the remote, re-running the incremental tests and the end-to-end command. Use when the user explicitly asks to ship, publish or push a batch, or to open a pull request (PR) for it; "open a PR" means ship with --pr. Never on your own initiative.
+argument-hint: "<batch-name>|--branch [repo] [--pr|--direct]"
 allowed-tools: Bash(ms-workspace usage:*) Bash(ms-workspace plan:*)
 ---
 
 # dynamia:ship
 
 The only step that touches remotes. It never targets release branches and never force-pushes.
+
+It ships two things: a **batch** (`int/<batch>` worktrees) or a **plain branch** (`--branch`: the task branch checked out in a repo's own checkout, which `/dynamia:batch` offers for small single-repo tasks). Everything below applies to both; for a plain branch replace `<batch>` with `--branch [<repo>]` in every command (the repo defaults to the one you are in; it must be on a task branch, not the base branch, with a clean tree). Ship merges a moved base into that branch in the checkout, and leaves the branch there afterwards.
 
 It works from the workspace root or from inside the batch worktree. In a batch worktree the guard blocks `git push`, `gh pr create` and `ship --skip-gate` typed by hand, so always go through `ms-workspace ship`.
 
@@ -22,7 +24,7 @@ It works from the workspace root or from inside the batch worktree. In a batch w
 ## Steps
 
 0. **Check plan usage first**: `ms-workspace usage --check --need 5`. Exit 0 or 3 (no data): continue. Exit 1 or 2: show the printed numbers and use `AskUserQuestion` (continue / do a smaller step / stop) before doing anything else. If the user stops mid-batch, leave a handoff first: `ms-workspace memory add --type handoff --batch <batch> "state, next step, files touched"`. Never start something that cannot be finished in the remaining window.
-1. **Pick the batch**: `$ARGUMENTS`, or list with `ms-workspace clean`.
+1. **Pick the target**: `$ARGUMENTS`, or list batches with `ms-workspace clean`. If the user worked on a plain branch (no batch exists for it), use `--branch`.
 
 2. **Show the plan**: `ms-workspace plan <batch> [--pr]`. For every repo it lists the target branch, push mode, the commit subjects that would be sent and a diffstat. It refuses while agent branches are not integrated: run `/dynamia:integrate` first.
 
@@ -35,7 +37,7 @@ It works from the workspace root or from inside the batch worktree. In a batch w
    - Base moved: it merges `origin/<base>` into the batch and re-runs the tests; this is expected.
    - Conflict, failed t1/e2e, or a rejected push: nothing further is pushed. Report the exact error and stop; do not retry blindly.
 
-5. **After success**: do not clean yet after a PR: it is still open. After a direct push, run `ms-workspace clean <batch>` without asking. Report the pushed repos in one line each, with the t1/e2e result taken from the ship output and anything skipped (`--skip-e2e`, repos without tests).
+5. **After success**: do not clean yet after a PR: it is still open. After a direct push of a batch, run `ms-workspace clean <batch>` without asking. A plain branch has nothing to clean: leave it, and tell the user it can be deleted once merged. Report the pushed repos in one line each, with the t1/e2e result taken from the ship output and anything skipped (`--skip-e2e`, repos without tests).
 
 ## Cleaning later
 `ms-workspace clean <batch>` first fetches the base branch from origin and removes the batch without any question only when its work is already there (plain, rebase or squash merge). If the PR is not merged yet it refuses and removes nothing. Do not ask the user first: run it, and if it refuses relay the one-line reason. Discard an unmerged batch only when the user says so (`--force`).

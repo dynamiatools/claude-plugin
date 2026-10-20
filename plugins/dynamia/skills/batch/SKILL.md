@@ -19,7 +19,7 @@ Opens a **batch**: one `int/<batch>` worktree per repo under `<workspace>/workin
    - A plain branch fits when all of these hold: one repo, small and well-bounded (a few files), the checkout is clean, and it is on the base branch or already on the branch of this same task.
    - When unsure, recommend the worktree.
    Never pick for the user: give the recommendation and its reason in one line, and ask with `AskUserQuestion` (worktree / plain branch, recommended option first). You can fold this into the question round of step 2.
-   If they choose the plain branch: `git switch -c <task-branch>` from the base branch (or stay on the task's branch), commit locally, run `ms-workspace test t0`, and skip steps 2-5. There is no `int/<batch>`, so `/dynamia:ship` does not apply: publishing stays the user's, and nothing is pushed from here.
+   If they choose the plain branch: `git switch -c <task-branch>` from the base branch (or stay on the task's branch), commit locally, run `ms-workspace test t0`, and skip steps 2-5. There is no `int/<batch>`; nothing is pushed from here. To publish it later the user runs `/dynamia:ship --branch` (it syncs, tests and pushes or opens a PR like a batch).
 
 2. **Collect only what is missing** with one `AskUserQuestion` round:
    - Batch name (kebab-case; use `$ARGUMENTS` if given).

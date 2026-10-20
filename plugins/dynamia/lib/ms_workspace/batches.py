@@ -324,12 +324,36 @@ def pr_text(wt: Path, base: str, batch: str, title: str, body: str, checks: str)
     return title, body
 
 
+def _plain_target(ws: Workspace, repo: str) -> tuple[str, dict]:
+    """The plain local branch checked out in a repo's own checkout: (record label, {repo: (checkout, branch)}).
+    The repo is the argument, else the one the current directory belongs to."""
+    name = repo
+    if not name:
+        top = toplevel()
+        name = next((r for r in ws.repo_names() if ws.repo_dir(r).resolve() == top.resolve()), "")
+    if name not in ws.repo_names():
+        die(f"ship --branch: cannot tell which repo to ship ('{name or repo}'); run it inside the repo or name it: ship --branch <repo>")
+    directory = ws.repo_dir(name)
+    branch = git_out(directory, "branch", "--show-current")
+    if not branch or branch == ws.base(name):
+        die(f"{name}: ship --branch needs a task branch checked out, not '{branch or 'a detached HEAD'}' (base is '{ws.base(name)}')")
+    return "branch-" + branch.replace("/", "-"), {name: (directory, branch)}
+
+
 def _ship(ws: Workspace, args: list[str]) -> int:
     from .runner import run_e2e, test_t1
 
     if not args:
-        die("usage: ship <batch> [--yes] [--pr|--direct] [--skip-e2e] [--title T] [--body-file F]")
-    batch = need_batch(ws, args[0])
+        die("usage: ship <batch>|--branch [<repo>] [--yes] [--pr|--direct] [--skip-e2e] [--title T] [--body-file F]")
+    plain = args[0] == "--branch"   # a plain local branch in the repo's own checkout, no int/<batch> worktree
+    if plain:
+        repo_arg = args[1] if len(args) > 1 and not args[1].startswith("-") else ""
+        args = args[(2 if repo_arg else 1):]
+        batch, place = _plain_target(ws, repo_arg)
+        args = [batch] + args   # from here on args[0] stands for the batch, as in a normal ship
+    else:
+        batch = need_batch(ws, args[0])
+        place = {r: (ws.batch_dir / batch / r, f"int/{batch}") for r in batch_repos(ws, batch)}
     yes = skip_e2e = skip_smoke = skip_gate = force_pr = force_direct = False
     pr_title = pr_body = ""
     rest = iter(args[1:])
@@ -361,11 +385,11 @@ def _ship(ws: Workspace, args: list[str]) -> int:
             die(f"ship: unknown option {a}")
 
     repos = []
-    for r in topo(ws, batch_repos(ws, batch)):
-        wt, base = ws.batch_dir / batch / r, ws.base(r)
+    for r in topo(ws, list(place)):
+        wt, base = place[r][0], ws.base(r)
         if git_out(wt, "status", "--porcelain"):
-            die(f"{r}: uncommitted changes in int/{batch}")
-        pending = unintegrated(ws, batch, r)
+            die(f"{r}: uncommitted changes in {place[r][1]}")
+        pending = [] if plain else unintegrated(ws, batch, r)
         if pending:
             die(f"{r}: agent branches not integrated into int/{batch}: {', '.join(pending)}; "
                 f"run 'ms-workspace integrate {batch}' first (or 'clean --force' to discard them)")
@@ -385,11 +409,11 @@ def _ship(ws: Workspace, args: list[str]) -> int:
 
     print(f"Plan for batch '{batch}' (this is what would be sent):")
     for r in repos:
-        wt, base = ws.batch_dir / batch / r, ws.base(r)
+        wt, base = place[r][0], ws.base(r)
         mode = push_mode(ws, r, force_pr, force_direct)
         ref = base_ref(wt, base)
         n = ahead_of_base(wt, base)
-        print(f"  {r}: int/{batch} -> {base} ({mode}, {n} commits)")
+        print(f"  {r}: {place[r][1]} -> {base} ({mode}, {n} commits)")
         for l in git_out(wt, "log", "--format=%h %s", "--max-count=10", f"{ref}..HEAD").splitlines():
             print(f"      {l}")
         if n > 10:
@@ -400,8 +424,8 @@ def _ship(ws: Workspace, args: list[str]) -> int:
         why = pr_recommendation(ws, wt, ref) if mode != "pr" else ""
         if why:
             print(f"      RECOMMEND A PR: {why}. A direct push sends it all to {base} at once; to open a PR instead: ms-workspace ship {batch} --pr")
-    from .gate import gate_batch, report
-    gate_lines, gate_blocks, gate_warns = report(gate_batch(ws, batch))
+    from .gate import gate_places, report
+    gate_lines, gate_blocks, gate_warns = report(gate_places(ws, place))
     print("  gate: " + ("clean" if not gate_blocks and not gate_warns else f"{gate_blocks} blocking, {gate_warns} warning(s)") + ("  [skipped by --skip-gate]" if skip_gate else ""))
     print("\n".join(gate_lines))
     smoke = ws.get("http", "smoke")
@@ -413,18 +437,18 @@ def _ship(ws: Workspace, args: list[str]) -> int:
 
     # 1) sync with the base branch (merge, since int/* is local only)
     for r in repos:
-        wt, base = ws.batch_dir / batch / r, ws.base(r)
+        wt, base = place[r][0], ws.base(r)
         if not git_ok(wt, "merge-base", "--is-ancestor", f"origin/{base}", "HEAD"):
             print(f"  {r}: base moved, merging origin/{base}")
             if not git_ok(wt, "merge", "--no-edit", f"origin/{base}"):
                 git(wt, "merge", "--abort")
                 ws.log("ship", "conflict", r, batch, f"merging origin/{base}")
-                die(f"{r}: conflict merging origin/{base} into int/{batch}; resolve it in {wt} and run ship again")
+                die(f"{r}: conflict merging origin/{base} into {place[r][1]}; resolve it in {wt} and run ship again")
     # 2) gate and tests
     if gate_blocks and not skip_gate:
         ws.log("ship", "fail", "", batch, f"gate: {gate_blocks} blocking finding(s)")
         die(f"the gate found {gate_blocks} blocking problem(s) in what would be sent (listed above); nothing was pushed. Fix them or pass --skip-gate")
-    if test_t1(ws, batch) != 0:
+    if test_t1(ws, batch, place) != 0:
         ws.log("ship", "fail", "", batch, "t1 failed")
         die("t1 failed; nothing was pushed")
     if smoke and not skip_smoke:
@@ -436,7 +460,7 @@ def _ship(ws: Workspace, args: list[str]) -> int:
     if not skip_e2e:
         if not ws.get("e2e", "command"):
             die("no [e2e] command configured; pass --skip-e2e to ship without e2e")
-        if run_e2e(ws, batch) != 0:
+        if run_e2e(ws, "" if plain else batch) != 0:
             ws.log("ship", "fail", "", batch, "t2 failed")
             die("e2e failed; nothing was pushed")
     # 3) push. Record what the base branch pointed to before and after, so the ship can be undone.
@@ -444,37 +468,37 @@ def _ship(ws: Workspace, args: list[str]) -> int:
     record_path = ws.state_dir / "ship" / f"{batch}-{stamp}.json"
     record = {"batch": batch, "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "repos": {}}
     for r in repos:
-        wt, base = ws.batch_dir / batch / r, ws.base(r)
-        record["repos"][r] = {"base": base, "mode": push_mode(ws, r, force_pr, force_direct), "branch": f"int/{batch}",
+        wt, base = place[r][0], ws.base(r)
+        record["repos"][r] = {"base": base, "mode": push_mode(ws, r, force_pr, force_direct), "branch": place[r][1],
                               "before": git_out(wt, "rev-parse", f"origin/{base}"), "after": git_out(wt, "rev-parse", "HEAD"), "pushed": False}
     record_path.parent.mkdir(parents=True, exist_ok=True)
     record_path.write_text(json.dumps(record, indent=2))
     for r in repos:
-        wt, base = ws.batch_dir / batch / r, ws.base(r)
+        wt, base = place[r][0], ws.base(r)
         mode = push_mode(ws, r, force_pr, force_direct)
         if mode == "pr":
-            p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"int/{batch}"])
+            p = subprocess.run(["git", "-C", str(wt), "push", "origin", place[r][1]])
             if p.returncode != 0:
-                die(f"{r}: could not push int/{batch}")
+                die(f"{r}: could not push {place[r][1]}")
             checks = "- Unit tests (t1): passed" + ("" if skip_e2e else "\n- End-to-end: passed") + ("\n- Smoke checks: passed" if smoke and not skip_smoke else "")
             title, body = pr_text(wt, base, batch, pr_title, pr_body, checks)
             try:
-                p = subprocess.run(["gh", "pr", "create", "--base", base, "--head", f"int/{batch}", "--title", title, "--body", body], cwd=wt)
+                p = subprocess.run(["gh", "pr", "create", "--base", base, "--head", place[r][1], "--title", title, "--body", body], cwd=wt)
             except OSError as e:
-                die(f"{r}: int/{batch} was pushed but 'gh' failed to start ({e}); open the PR by hand")
+                die(f"{r}: {place[r][1]} was pushed but 'gh' failed to start ({e}); open the PR by hand")
             if p.returncode != 0:
-                die(f"{r}: int/{batch} was pushed but the PR could not be opened; open it by hand (or rerun ship after fixing gh)")
+                die(f"{r}: {place[r][1]} was pushed but the PR could not be opened; open it by hand (or rerun ship after fixing gh)")
         else:
-            p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"int/{batch}:{base}"])
+            p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"{place[r][1]}:{base}"])
             if p.returncode != 0:
                 die(f"{r}: push to {base} rejected (base moved again? run ship again)")
         record["repos"][r]["pushed"] = True
         record_path.write_text(json.dumps(record, indent=2))
-        ws.log("ship", "ok", r, batch, f"int/{batch} -> {base} ({mode})",
+        ws.log("ship", "ok", r, batch, f"{place[r][1]} -> {base} ({mode})",
                before=record["repos"][r]["before"][:12], after=record["repos"][r]["after"][:12])
         print(f"  pushed {r}")
     ws._shipped = list(repos)
-    print(f"Shipped. Cleanup: ms-workspace clean {batch}. To revert: ms-workspace undo {batch}")
+    print(f"Shipped. " + ("The branch stays in your checkout; delete it when merged. " if plain else f"Cleanup: ms-workspace clean {batch}. ") + f"To revert: ms-workspace undo {batch}")
     return 0
 
 

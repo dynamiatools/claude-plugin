@@ -457,6 +457,40 @@ class TestShip(Base):
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("uncommitted", r.stderr)
 
+    def plain_branch(self):
+        lib = self.ws.project / "lib"
+        self.ws.git(lib, "switch", "-q", "-c", "fix/small")
+        self.ws.commit(lib, "small fix", {"fix.txt": "1"})
+        return lib
+
+    def test_plain_branch_ships_from_the_repo_checkout(self):
+        lib = self.plain_branch()
+        plan = self.ws.ms("ship", "--branch", cwd=lib)
+        self.assertOk(plan)
+        self.assertIn("fix/small -> next", plan.stdout)
+        self.assertNotIn("small fix", self.ws.remote_log("lib"))
+        r = self.ws.ms("ship", "--branch", "--yes", "--skip-e2e", cwd=lib)
+        self.assertOk(r)
+        self.assertIn("PASS t1 lib", r.stdout)
+        self.assertEqual(self.ws.remote_log("lib")[0], "small fix")
+        self.assertEqual(self.ws.git(lib, "branch", "--show-current"), "fix/small")   # the user's branch is left alone
+
+    def test_plain_branch_can_name_the_repo(self):
+        self.plain_branch()
+        self.assertOk(self.ws.ms("ship", "--branch", "lib", "--yes", "--skip-e2e"))
+        self.assertEqual(self.ws.remote_log("lib")[0], "small fix")
+
+    def test_plain_branch_refuses_the_base_branch_and_dirty_trees(self):
+        lib = self.ws.project / "lib"
+        r = self.ws.ms("ship", "--branch", cwd=lib)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("task branch", r.stderr)
+        self.plain_branch()
+        (lib / "fix.txt").write_text("dirty")
+        r = self.ws.ms("ship", "--branch", "--yes", "--skip-e2e", cwd=lib)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("uncommitted", r.stderr)
+
     def test_nothing_to_ship(self):
         self.ws.batch("empty")
         r = self.ws.ms("ship", "empty")
@@ -2219,7 +2253,7 @@ class TestOpen(Base):
 
     def test_missing_ide_and_bad_input_fail_clearly(self):
         self.ws.batch("b1")
-        bare = {"PATH": "/usr/bin:/bin"}
+        bare = {"PATH": str(self.ws.tmp / "empty")}   # not /usr/bin: a real `code` there would be launched by the test
         r = self.ws.ms_py("open", "b1", "--ide", "idea", env=bare)
         self.assertEqual(r.returncode, 1)
         self.assertIn("idea not found", r.stderr)
@@ -3543,10 +3577,10 @@ class TestProcesses(Base):
     def test_leftovers_are_attributed_to_the_batch_they_run_in(self):
         d = self.ws.batch("b1", "lib")
         self.sleeper(cwd=d / "lib")
-        out = self.ws.ms("ps", "leftovers", "--hours", "0").stdout
+        out = self.ws.ms("ps", "leftovers", "--hours", "0", "--limit", "10000").stdout   # no cap: a busy machine has more than 20
         self.assertIn("[batch b1/lib]", out)
         self.assertIn("ms-workspace ps kill", out)
-        self.assertNotIn("claude", out.split("\n", 1)[1])
+        self.assertNotRegex(out.split("\n", 1)[1], r"(?m)(^|[\s/])claude(\s|$)")   # the claude CLI is protected; paths like test-my-claude are fine
 
     def test_clean_refuses_while_processes_run_inside_the_batch(self):
         d = self.ws.batch("b1", "lib")

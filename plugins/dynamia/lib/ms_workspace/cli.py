@@ -155,7 +155,7 @@ def _dispatch(cmd: str, args: list[str]) -> int:
     table = {
         "batch": batches.cmd_batch, "agent": batches.cmd_agent, "affected": batches.cmd_affected,
         "env": batches.cmd_env, "integrate": batches.cmd_integrate, "ship": batches.cmd_ship,
-        "clean": batches.cmd_clean, "undo": batches.cmd_undo, "plan": lambda ws, a: batches.cmd_ship(ws, a[:1] + [x for x in a[1:] if x == "--pr"]), "test": runner.cmd_test, "log": overview.cmd_log,
+        "clean": batches.cmd_clean, "undo": batches.cmd_undo, "plan": lambda ws, a: batches.cmd_ship(ws, [x for i, x in enumerate(a) if i == 0 or x == "--pr" or (a[0] == "--branch" and i == 1 and not x.startswith("-"))]), "test": runner.cmd_test, "log": overview.cmd_log,
         "status": overview.cmd_status, "claude-md": claude_md.cmd_claude_md,
         "memory": memory.cmd_memory, "release": lambda ws, a: __import__("ms_workspace.release", fromlist=["x"]).cmd_release(ws, a), "recall": lambda ws, a: __import__("ms_workspace.recall", fromlist=["x"]).cmd_recall(ws, a), "insights": insights.cmd_insights, "tokens": tokens.cmd_tokens,
     }
