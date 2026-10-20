@@ -12,4 +12,9 @@ Ideas adapted from [obra/superpowers](https://github.com/obra/superpowers) (MIT)
 | `tdd` | Test first, watch it fail (opt-in) |
 | `clear-answers` | Short, direct answers and reports |
 
-Install: add the marketplace and enable `dynamia-craft` next to `dynamia`.
+Install:
+
+```
+/plugin marketplace add dynamiatools/claude-plugins
+/plugin install dynamia-craft@dynamia-tools
+```
