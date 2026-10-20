@@ -130,10 +130,15 @@ def scan_repo(directory: Path, base: str, max_kb: int, ignore: list[str], allow:
 
 
 def gate_batch(ws: Workspace, batch: str) -> dict[str, list[dict]]:
+    return gate_places(ws, {r: (ws.batch_dir / batch / r, "") for r in batch_repos(ws, batch)})
+
+
+def gate_places(ws: Workspace, place: dict) -> dict[str, list[dict]]:
+    """Scan what each repo would send. `place` maps repo -> (checkout, branch), as ship builds it."""
     max_kb = int(ws.get("gate", "max_file_kb", default=1024))
     ignore = list(ws.get("gate", "ignore_paths", default=[]))
     allow = [re.compile(p) for p in ws.get("gate", "allow", default=[])]
-    return {r: scan_repo(ws.batch_dir / batch / r, ws.base(r), max_kb, ignore, allow) for r in topo(ws, batch_repos(ws, batch))}
+    return {r: scan_repo(place[r][0], ws.base(r), max_kb, ignore, allow) for r in topo(ws, list(place))}
 
 
 def report(results: dict[str, list[dict]], limit: int = 12) -> tuple[list[str], int, int]:

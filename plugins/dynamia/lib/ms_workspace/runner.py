@@ -121,9 +121,11 @@ def run_e2e(ws: Workspace, batch: str) -> int:
     return rc
 
 
-def test_t1(ws: Workspace, batch: str) -> int:
-    for r in topo(ws, batch_repos(ws, batch)):
-        wt = ws.batch_dir / batch / r
+def test_t1(ws: Workspace, batch: str, place: dict | None = None) -> int:
+    """t1 for the changed repos of a batch; `place` (repo -> (checkout, branch)) replaces the batch layout for a plain branch."""
+    place = place or {r: (ws.batch_dir / batch / r, "") for r in batch_repos(ws, batch)}
+    for r in topo(ws, list(place)):
+        wt = place[r][0]
         if ahead_of_base(wt, ws.base(r)) == 0:
             print(f"skip {r} (no changes vs base)")
             continue

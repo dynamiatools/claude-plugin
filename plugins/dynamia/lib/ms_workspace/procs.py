@@ -9,7 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from .core import Workspace, die
+from .core import Workspace, die, int_arg
 
 PROTECTED = re.compile(r"(^|/)(systemd|init|launchd|sshd|tmux|screen|login|dbus-daemon|claude)(\s|$|:)")
 DEV_TOOLS = re.compile(r"(^|/)(java|node|npm|npx|pnpm|yarn|mvn|gradle|python3?|uvicorn|gunicorn|flask|vite|next|nuxt|esbuild|webpack|cloudflared|docker-proxy)(\s|$)")
@@ -224,12 +224,14 @@ def cmd_ports(ws, args: list[str]) -> int:
 
 
 def cmd_leftovers(ws, args: list[str]) -> int:
-    hours = 4.0
+    hours, limit = 4.0, 20
     if "--hours" in args:
         try:
             hours = float(args[args.index("--hours") + 1])
         except (IndexError, ValueError):
             die("--hours needs a number")
+    if "--limit" in args:
+        limit = int_arg(iter(args[args.index("--limit") + 1:]), "--limit", limit)
     procs = snapshot()
     skip, me = ancestors(procs), os.environ.get("USER") or os.environ.get("LOGNAME")
     found = []
@@ -239,7 +241,7 @@ def cmd_leftovers(ws, args: list[str]) -> int:
         if p.age >= hours * 3600 or p.ppid == 1:
             found.append(p)
     print(f"{len(found)} dev process(es) of yours that are older than {hours:g}h or orphaned (parent pid 1)")
-    for p in sorted(found, key=lambda p: -p.rss)[:20]:
+    for p in sorted(found, key=lambda p: -p.rss)[:limit]:
         print(p.line(label_for(ws, cwd_of(p.pid))))
     if found:
         print("Stop one with: ms-workspace ps kill <pid> --yes   (it checks the process first)")
