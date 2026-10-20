@@ -1,0 +1,11 @@
+{
+  "name": "dynamia-platform",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mario Serrano"
+  },
+  "description": "Work with Dynamia Platform (DynamiaTools): backend patterns, ZK, Vue frontend, live docs from GitHub, and the dynamia CLI.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugins/tree/master/plugins/dynamia-platform",
+  "repository": "https://github.com/dynamiatools/claude-plugins"
+}

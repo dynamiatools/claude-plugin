@@ -1,0 +1,9 @@
+dynamia-platform includes summaries and adaptations of material from:
+
+  Dynamia Platform / DynamiaTools (https://github.com/dynamiatools/framework)
+  Copyright Dynamia Soluciones. Licensed under the Apache License, Version 2.0
+  (http://www.apache.org/licenses/LICENSE-2.0).
+
+Adapted: the "dynamia-tools" Claude skill (.claude/skills/dynamia-tools/SKILL.md) and the READMEs of the
+@dynamia-tools npm packages. The text was rewritten, shortened and reorganized; code examples were kept
+where they were verified against the framework sources. The rest of this plugin is MIT (see LICENSE).

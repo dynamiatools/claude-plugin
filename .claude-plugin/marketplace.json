@@ -13,6 +13,11 @@
       "name": "dynamia-craft",
       "source": "./plugins/dynamia-craft",
       "description": "Working discipline for Claude Code: ask before building, find the root cause before fixing, plan in small steps, answer clearly."
+    },
+    {
+      "name": "dynamia-platform",
+      "source": "./plugins/dynamia-platform",
+      "description": "Work with Dynamia Platform: backend patterns, ZK, Vue frontend, live docs from GitHub and the dynamia CLI."
     }
   ]
 }
