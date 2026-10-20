@@ -8,6 +8,11 @@
       "name": "dynamia",
       "source": "./plugins/dynamia",
       "description": "Multi-repo workspace tools for Claude Code: batches, guard hooks, token-cheap agents and a dev-env panel."
+    },
+    {
+      "name": "dynamia-craft",
+      "source": "./plugins/dynamia-craft",
+      "description": "Working discipline for Claude Code: ask before building, find the root cause before fixing, plan in small steps, answer clearly."
     }
   ]
 }
