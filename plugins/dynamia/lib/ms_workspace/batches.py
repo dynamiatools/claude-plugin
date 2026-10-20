@@ -310,16 +310,43 @@ def pr_recommendation(ws: Workspace, wt: Path, ref: str) -> str:
     return ", ".join(found)
 
 
+def pr_text(wt: Path, base: str, batch: str, title: str, body: str, checks: str) -> tuple[str, str]:
+    """Title and body for a PR. Explicit --title/--body-file win; otherwise build them from the commits."""
+    ref = base_ref(wt, base)
+    subjects = git_out(wt, "log", "--reverse", "--no-merges", "--format=%s", f"{ref}..HEAD").splitlines()
+    if not title:
+        title = subjects[0] if len(subjects) == 1 else (f"{subjects[0]} (+{len(subjects) - 1} more)" if subjects else batch)
+    if not body:
+        commits = git_out(wt, "log", "--reverse", "--no-merges", "--format=- %s%n%w(0,2,2)%b", f"{ref}..HEAD").strip()
+        stat = git_out(wt, "diff", "--stat", f"{ref}...HEAD")
+        body = (f"## Summary\n\n{commits}\n\n## Changes\n\n```\n{stat}\n```\n\n"
+                f"## Verification\n\n{checks}\n\nBatch: `{batch}`")
+    return title, body
+
+
 def _ship(ws: Workspace, args: list[str]) -> int:
     from .runner import run_e2e, test_t1
 
     if not args:
-        die("usage: ship <batch> [--yes] [--pr|--direct] [--skip-e2e]")
+        die("usage: ship <batch> [--yes] [--pr|--direct] [--skip-e2e] [--title T] [--body-file F]")
     batch = need_batch(ws, args[0])
     yes = skip_e2e = skip_smoke = skip_gate = force_pr = force_direct = False
-    for a in args[1:]:
+    pr_title = pr_body = ""
+    rest = iter(args[1:])
+    for a in rest:
         if a == "--yes":
             yes = True
+        elif a in ("--title", "--body-file"):
+            v = next(rest, None)
+            if v is None:
+                die(f"ship: {a} needs a value")
+            if a == "--title":
+                pr_title = v
+            else:
+                try:
+                    pr_body = Path(v).read_text()
+                except OSError as e:
+                    die(f"ship: cannot read {v}: {e}")
         elif a == "--pr":
             force_pr = True
         elif a == "--direct":
@@ -429,8 +456,10 @@ def _ship(ws: Workspace, args: list[str]) -> int:
             p = subprocess.run(["git", "-C", str(wt), "push", "origin", f"int/{batch}"])
             if p.returncode != 0:
                 die(f"{r}: could not push int/{batch}")
+            checks = "- Unit tests (t1): passed" + ("" if skip_e2e else "\n- End-to-end: passed") + ("\n- Smoke checks: passed" if smoke and not skip_smoke else "")
+            title, body = pr_text(wt, base, batch, pr_title, pr_body, checks)
             try:
-                p = subprocess.run(["gh", "pr", "create", "--base", base, "--head", f"int/{batch}", "--fill"], cwd=wt)
+                p = subprocess.run(["gh", "pr", "create", "--base", base, "--head", f"int/{batch}", "--title", title, "--body", body], cwd=wt)
             except OSError as e:
                 die(f"{r}: int/{batch} was pushed but 'gh' failed to start ({e}); open the PR by hand")
             if p.returncode != 0:
@@ -450,10 +479,20 @@ def _ship(ws: Workspace, args: list[str]) -> int:
 
 
 # ------------------------------------------------------------------------ clean
-def _merged(ws: Workspace, batch: str, repo: str) -> bool:
-    """int/<batch> is part of its base branch AND every agent branch is part of int/<batch>."""
+def _merged(ws: Workspace, batch: str, repo: str, fetch: bool = False) -> bool:
+    """The work of int/<batch> is in the base branch as the remote has it, and every agent branch is part of int/<batch>.
+    Plain, rebase and squash merges all count: a merge of HEAD into the base that changes nothing means its content is already there."""
     wt = ws.batch_dir / batch / repo
-    return git_ok(wt, "merge-base", "--is-ancestor", "HEAD", base_ref(wt, ws.base(repo))) and not unintegrated(ws, batch, repo)
+    base = ws.base(repo)
+    if fetch and git_ok(ws.repo_dir(repo), "remote", "get-url", "origin") and not git_ok(ws.repo_dir(repo), "fetch", "origin", base, "--quiet"):
+        return False  # origin exists but cannot be reached: the merge cannot be verified
+    if unintegrated(ws, batch, repo):
+        return False
+    ref = base_ref(wt, base)
+    if git_ok(wt, "merge-base", "--is-ancestor", "HEAD", ref):
+        return True
+    merged = git(wt, "merge-tree", "--write-tree", ref, "HEAD")
+    return merged.returncode == 0 and merged.stdout.strip().splitlines()[0] == git_out(wt, "rev-parse", f"{ref}^{{tree}}")
 
 
 def cmd_clean(ws: Workspace, args: list[str]) -> int:
@@ -476,8 +515,9 @@ def cmd_clean(ws: Workspace, args: list[str]) -> int:
             pending = unintegrated(ws, batch, r)
             if pending:
                 die(f"{r}: agent branches not integrated into int/{batch}: {', '.join(pending)} (integrate them, or use --force to discard)")
-            if not _merged(ws, batch, r):
-                die(f"{r}: int/{batch} is not merged into {ws.base(r)} yet (use --force to discard)")
+            if not _merged(ws, batch, r, fetch=True):
+                die(f"{r}: int/{batch} is not in origin/{ws.base(r)} yet (PR still open or not merged, or origin unreachable). "
+                    f"Nothing was removed; use --force to discard the batch anyway")
     from .procs import procs_in_dir
     running = procs_in_dir(ws.batch_dir / batch)
     if running:

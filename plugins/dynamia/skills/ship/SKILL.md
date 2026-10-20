@@ -31,10 +31,14 @@ It works from the workspace root or from inside the batch worktree. In a batch w
 3. **Confirm with the user** using `AskUserQuestion`, quoting the plan (repos, target branches and commit subjects so they see exactly what will be sent): ship now, ship with `--skip-e2e` (only if no e2e exists or the user explicitly accepts the risk), or stop. Never assume consent from earlier messages.
 
 4. **Ship**: `ms-workspace ship <batch> --yes [--pr]` (Claude Code asks for permission on this command by design; do not try to avoid it) (add `--skip-e2e` only if chosen). Never pass `--skip-gate`: the guard blocks it.
+   - For a PR, write a descriptive title (imperative, under 70 characters, saying what the change does, not the batch name) and a short description (what and why, notable decisions, how it was verified) from the commits and diff you saw in the plan. Save the description to a file in the scratchpad and pass `--title "<title>" --body-file <file>`. These apply to every repo in the batch; with several repos, keep the text about the batch as a whole. Without them ship builds a basic title and body from the commits.
    - Base moved: it merges `origin/<base>` into the batch and re-runs the tests; this is expected.
    - Conflict, failed t1/e2e, or a rejected push: nothing further is pushed. Report the exact error and stop; do not retry blindly.
 
-5. **After success**: ask whether to run `ms-workspace clean <batch>` (removes worktrees and local branches), and report the pushed repos in one line each, with the t1/e2e result taken from the ship output and anything skipped (`--skip-e2e`, repos without tests).
+5. **After success**: do not clean yet after a PR: it is still open. After a direct push, run `ms-workspace clean <batch>` without asking. Report the pushed repos in one line each, with the t1/e2e result taken from the ship output and anything skipped (`--skip-e2e`, repos without tests).
+
+## Cleaning later
+`ms-workspace clean <batch>` first fetches the base branch from origin and removes the batch without any question only when its work is already there (plain, rebase or squash merge). If the PR is not merged yet it refuses and removes nothing. Do not ask the user first: run it, and if it refuses relay the one-line reason. Discard an unmerged batch only when the user says so (`--force`).
 
 ## Notes
 - Promotion from the base branch to QA/production is a separate, human decision outside this skill.

@@ -495,6 +495,15 @@ class TestClean(Base):
         self.assertNotIn("agent/b1/t1", branches)
         self.assertNotIn(".batches/b1", self.ws.git(self.ws.root / "lib", "worktree", "list"))
 
+    def test_clean_accepts_a_squash_merge_on_origin(self):
+        lib = self.ws.root / "lib"
+        base = self.ws.git(lib, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        self.ws.git(lib, "merge", "--squash", "int/b1")
+        self.ws.git(lib, "commit", "-m", "squashed")
+        self.ws.git(lib, "push", "origin", base)
+        self.assertOk(self.ws.ms("clean", "b1"))
+        self.assertFalse(self.d.exists())
+
     def test_force_discards_unmerged_work(self):
         self.assertOk(self.ws.ms("clean", "b1", "--force"))
         self.assertFalse(self.d.exists())
