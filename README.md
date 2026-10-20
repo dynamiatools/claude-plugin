@@ -11,8 +11,9 @@ The plugins we use every day at [Dynamia](https://dynamiasoluciones.com) to work
 |---|---|---|
 | [`dynamia`](plugins/dynamia) | Safe, token-cheap work across several repos: 19 skills, 4 helper agents, guard hooks, the `ms-workspace` tool and a dev-env panel | `/plugin install dynamia@dynamia-tools` |
 | [`dynamia-craft`](plugins/dynamia-craft) | Working discipline: ask before building, find the root cause before fixing, plan in small steps, answer clearly. 6 skills, no hooks | `/plugin install dynamia-craft@dynamia-tools` |
+| [`dynamia-platform`](plugins/dynamia-platform) | Work on Dynamia Platform projects: backend patterns, ZK, Vue frontend, live docs from GitHub and the `dynamia` CLI. 5 skills, 2 light hooks, standalone | `/plugin install dynamia-platform@dynamia-tools` |
 
-From a terminal (for example in a Remote Control session, where `/plugin` does not run): `claude plugin marketplace add dynamiatools/claude-plugins` and `claude plugin install dynamia@dynamia-tools` (or `dynamia-craft@dynamia-tools`).
+From a terminal (for example in a Remote Control session, where `/plugin` does not run): `claude plugin marketplace add dynamiatools/claude-plugins` and `claude plugin install dynamia@dynamia-tools` (or `dynamia-craft@dynamia-tools`, `dynamia-platform@dynamia-tools`).
 
 Each plugin lives in `plugins/<name>` with its own README, tests and version. The marketplace is `.claude-plugin/marketplace.json`.
 

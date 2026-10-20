@@ -1,0 +1,75 @@
+#!/bin/sh
+# Detects how a directory uses Dynamia Platform. POSIX sh, no dependencies besides grep, find and sed.
+#   dp-detect [dir]            one line summary, empty when the directory does not use Dynamia
+#   dp-detect --facts [dir]    key=value lines (backend, zk, vue, sdk, microfrontend, descriptors, version, cli, node, java)
+# Always exits 0: it is used by hooks and must never get in the way.
+
+mode=line
+[ "$1" = "--facts" ] && { mode=facts; shift; }
+dir=${1:-.}
+[ -d "$dir" ] || exit 0
+cd "$dir" 2>/dev/null || exit 0
+
+PRUNE='-name node_modules -o -name target -o -name .git -o -name dist -o -name build -o -name .claude -o -name .idea -o -name .pnpm-store'
+find_files() { # find_files <name-glob> ; depth capped so huge monorepos stay fast (the ERP keeps package.json 7 levels down)
+  find . -maxdepth 9 \( $PRUNE \) -prune -o -type f -name "$1" -print 2>/dev/null
+}
+
+backend=no zk=no vue=no sdk=no micro=no descr=no version=
+poms=$(find_files pom.xml; find_files 'build.gradle*'; find_files 'settings.gradle*')
+pkgs=$(find_files package.json)
+
+if [ -n "$poms" ]; then
+  # shellcheck disable=SC2086
+  if echo "$poms" | while IFS= read -r f; do grep -lE 'tools\.dynamia|dynamia-tools|dynamiatools' "$f" 2>/dev/null; done | grep -q .; then
+    backend=yes
+  fi
+fi
+if [ -n "$pkgs" ]; then
+  if echo "$pkgs" | while IFS= read -r f; do grep -l '"@dynamia-tools/vue"' "$f" 2>/dev/null; done | grep -q .; then vue=yes; fi
+  if echo "$pkgs" | while IFS= read -r f; do grep -lE '"@dynamia-tools/(sdk|ui-core)"' "$f" 2>/dev/null; done | grep -q .; then sdk=yes; fi
+  if echo "$pkgs" | while IFS= read -r f; do grep -l '"@dynamia-tools/microfrontend-bridge"' "$f" 2>/dev/null; done | grep -q .; then micro=yes; fi
+fi
+[ -d src/main/resources/META-INF/descriptors ] || [ -n "$(find . -maxdepth 8 \( $PRUNE \) -prune -o -type d -path '*META-INF/descriptors' -print -quit 2>/dev/null)" ] && descr=yes
+
+# ZK only counts when the project is Dynamia: a .zul file, or a ZK dependency next to Dynamia.
+if [ "$backend" = yes ]; then
+  [ -n "$(find . -maxdepth 8 \( $PRUNE \) -prune -o -type f -name '*.zul' -print -quit 2>/dev/null)" ] && zk=yes
+  if [ "$zk" = no ] && [ -n "$poms" ] && echo "$poms" | while IFS= read -r f; do grep -lE 'org\.zkoss|dynamia-tools-zk|tools\.dynamia\.zk' "$f" 2>/dev/null; done | grep -q .; then zk=yes; fi
+fi
+
+# <microfrontend> in ZUL also counts
+if [ "$zk" = yes ] && [ "$micro" = no ]; then
+  [ -n "$(find . -maxdepth 8 \( $PRUNE \) -prune -o -type f -name '*.zul' -print 2>/dev/null | head -200 | while IFS= read -r f; do grep -l '<microfrontend' "$f" 2>/dev/null; done | head -1)" ] && micro=yes
+fi
+
+# Version: a Maven property such as <tools.version> / <dynamiatools.version>, else a pinned npm range.
+if [ -n "$poms" ]; then
+  version=$(echo "$poms" | while IFS= read -r f; do sed -n 's/.*<\(tools\|dynamia\|dynamiatools\|dynamia-tools\|dynamia\.tools\)[.a-z-]*version>\(2[0-9]\.[^<]*\)<.*/\2/p' "$f" 2>/dev/null; done | head -1)
+fi
+if [ -z "$version" ] && [ -n "$pkgs" ]; then
+  version=$(echo "$pkgs" | while IFS= read -r f; do sed -n 's/.*"@dynamia-tools\/[a-z-]*": *"[\^~]*\(2[0-9]\.[0-9][0-9.]*\)".*/\1/p' "$f" 2>/dev/null; done | head -1)
+fi
+
+dynamia=no
+{ [ "$backend" = yes ] || [ "$vue" = yes ] || [ "$sdk" = yes ] || [ "$micro" = yes ]; } && dynamia=yes
+[ "$dynamia" = yes ] || { [ "$mode" = facts ] && echo "dynamia=no"; exit 0; }
+
+if [ "$mode" = facts ]; then
+  cli=no; command -v dynamia >/dev/null 2>&1 && cli=yes
+  node=$(command -v node >/dev/null 2>&1 && node -v 2>/dev/null || echo none)
+  java=$(command -v java >/dev/null 2>&1 && java -version 2>&1 | sed -n '1s/.*"\(.*\)".*/\1/p' || echo none)
+  printf 'dynamia=yes\nbackend=%s\nzk=%s\nvue=%s\nsdk=%s\nmicrofrontend=%s\ndescriptors=%s\nversion=%s\ncli=%s\nnode=%s\njava=%s\n' \
+    "$backend" "$zk" "$vue" "$sdk" "$micro" "$descr" "${version:-unknown}" "$cli" "$node" "$java"
+  exit 0
+fi
+
+parts=
+add() { parts="${parts:+$parts + }$1"; }
+[ "$backend" = yes ] && add backend
+[ "$zk" = yes ] && add ZK
+[ "$vue" = yes ] && add Vue
+[ "$sdk" = yes ] && [ "$vue" = no ] && add "TS SDK"
+[ "$micro" = yes ] && add microfrontend
+printf 'Dynamia Platform %s: %s. Skills: dynamia-platform:backend, :zk-ui, :vue-frontend, :docs, :cli.\n' "${version:-(version unknown)}" "$parts"
+exit 0

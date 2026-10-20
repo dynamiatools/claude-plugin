@@ -1,0 +1,29 @@
+#!/bin/sh
+# PreToolUse hook on Bash: `dynamia new` without every flag it needs opens an interactive wizard and the
+# session hangs waiting for a terminal. Block that case only; anything else (or any doubt) is allowed.
+payload=$(cat 2>/dev/null)
+# shortcut: matches the raw JSON text, so a command that merely mentions "dynamia new" in a string is also checked.
+# Revisit if it gets in the way; a real parser would need jq or python.
+printf '%s' "$payload" | grep -qE '(^|[^A-Za-z0-9_./-])dynamia[[:space:]]+new([^A-Za-z0-9_-]|$)' || exit 0
+
+has() { printf '%s' "$payload" | grep -qE -- "$1"; }
+need=
+req() { has "$2" || need="$need $1"; }
+req --name    '--name[ =]'
+req --scaffold '--scaffold[ =]'
+req --yes     '--yes([^A-Za-z0-9_-]|$)'
+has '--(git|no-git)([^A-Za-z0-9_-]|$)' || need="$need --git|--no-git"
+scaffold=$(printf '%s' "$payload" | sed -n 's/.*--scaffold[ =]\([a-z]*\).*/\1/p' | head -1)
+case "$scaffold" in
+  frontend) ;;
+  *) req --backend-lang '--backend-lang[ =]'; req --group-id '--group-id[ =]'; req --artifact-id '--artifact-id[ =]'
+     req --version '--version[ =]'; req --description '--description[ =]' ;;
+esac
+case "$scaffold" in
+  backend) ;;
+  *) req --frontend '--frontend[ =]'; req --pm '--pm[ =]' ;;
+esac
+[ -z "$need" ] && exit 0
+echo "Blocked: 'dynamia new' would open its interactive wizard and hang this session. Missing flags:$need." \
+     "Pass them all (see the dynamia-platform:cli skill), or ask the user to run the wizard themselves with '! dynamia new'." >&2
+exit 2
