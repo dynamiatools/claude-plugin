@@ -38,6 +38,11 @@
       "name": "dynamia-kotlin",
       "source": "./plugins/dynamia-kotlin",
       "description": "Kotlin for backend work: idioms and Java interop, coroutines, Kotlin with Spring Boot 4, Ktor and Exposed services, Gradle and Maven builds, and a Kotlin review checklist."
+    },
+    {
+      "name": "dynamia-test",
+      "source": "./plugins/dynamia-test",
+      "description": "Testing for JVM and web projects: test strategy and review, JUnit 6 and Spring Boot 4 tests, Vitest and Playwright, failing-test triage, and coverage and mutation quality gates."
     }
   ]
 }

@@ -1,0 +1,11 @@
+{
+  "name": "dynamia-test",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mario Serrano"
+  },
+  "description": "Testing for JVM and web projects in Claude Code: test strategy and review, JUnit 6 and Spring Boot 4 tests, Vitest and Playwright, failing-test triage, and coverage and mutation quality gates.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugins/tree/master/plugins/dynamia-test",
+  "repository": "https://github.com/dynamiatools/claude-plugins"
+}
