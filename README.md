@@ -26,6 +26,7 @@ claude plugin install <plugin>@dynamia-tools
 | [`dynamia-java`](plugins/dynamia-java) | Modern Java 25 and Spring Boot 4: idioms, concurrency, Spring Boot and Hibernate 7 practices, upgrades, Java review. 6 skills, no hooks | `dynamia-java@dynamia-tools` |
 | [`dynamia-kotlin`](plugins/dynamia-kotlin) | Kotlin for backends: idioms, coroutines, Spring Boot 4, Ktor and Exposed, Gradle and Maven, review. 6 skills, no hooks | `dynamia-kotlin@dynamia-tools` |
 | [`dynamia-test`](plugins/dynamia-test) | Testing: strategy and review, JUnit 6 and Spring Boot 4, Vitest and Playwright, failing-test triage, coverage and mutation gates. 5 skills, no hooks | `dynamia-test@dynamia-tools` |
+| [`dynamia-docs`](plugins/dynamia-docs) | Docs: README and docs layout, ADRs, API docs, changelogs, runbooks, diagrams, docs audits. 7 skills, no hooks | `dynamia-docs@dynamia-tools` |
 
 Each works on its own; they only point to each other as optional extras, and recommend installing the sibling when it is missing. Together they cover the workflow (`dynamia`), the way of working (`dynamia-craft`), the framework (`dynamia-platform`) and the interface (`dynamia-ui`).
 

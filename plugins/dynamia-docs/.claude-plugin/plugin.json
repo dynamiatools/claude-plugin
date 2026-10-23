@@ -1,0 +1,11 @@
+{
+  "name": "dynamia-docs",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mario Serrano"
+  },
+  "description": "Documentation for software projects in Claude Code: READMEs, architecture decision records, API and code docs, changelogs and release notes, runbooks, diagrams, and audits that keep docs true to the code.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugins/tree/master/plugins/dynamia-docs",
+  "repository": "https://github.com/dynamiatools/claude-plugins"
+}
