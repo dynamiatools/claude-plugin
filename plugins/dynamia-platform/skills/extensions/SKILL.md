@@ -13,7 +13,7 @@ Extensions are separate modules with their own Maven coordinates, under `extensi
 
 | Extension | Use it for | Reference |
 |---|---|---|
-| `entity-files` | Attach files to any entity, file explorer, local or S3 storage, upload/download REST | `references/entity-files.md` |
+| `entity-files` | Attach files to any entity, file explorer, local, S3 or Buckie storage, upload/download REST | `references/entity-files.md` |
 | `reports` | Reports stored as queries with filters, run and export (XLSX, CSV, PDF), REST, dashboard widget, designer | `references/reports.md` |
 | `http-functions` | Call third-party HTTP APIs by name, versioned, configured in the database | `references/http-functions.md` |
 | `finances` | Invoices and documents: lines, taxes, discounts, withholdings, totals, money and currency | `references/finances.md` |
