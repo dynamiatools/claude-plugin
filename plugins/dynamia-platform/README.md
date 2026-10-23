@@ -11,7 +11,7 @@ Claude Code plugin for projects built on [Dynamia Platform](https://dynamia.tool
 
 | Skill | Use it to |
 |---|---|
-| `dynamia-platform:backend` | Write entities, `CrudService` code, `ModuleProvider`/`CrudPage`, actions (also headless/stateless ones for REST clients), validators, listeners and YAML view descriptors. References: loading collections without OSIV, `BeanMap` auto-DTOs, `QueryBuilder`, module conventions, utilities and `SchedulerUtil`, navigation scope and app metadata, SaaS multi-tenancy (`@TenantId`, `AccountTenants`, root tenant) |
+| `dynamia-platform:backend` | Write entities, `CrudService` code, `ModuleProvider`/`CrudPage`, actions (also headless/stateless ones for REST clients), validators, listeners and YAML view descriptors. References: `CrudService`/`QueryParameters`/`QueryConditions`, loading collections without OSIV, `BeanMap` auto-DTOs, `QueryBuilder`, module conventions, utilities and `SchedulerUtil`, navigation scope and app metadata, SaaS multi-tenancy (`@TenantId`, `AccountTenants`, root tenant) |
 | `dynamia-platform:zk-ui` | Work on ZUL pages, MVVM view models, `CrudController`, test view models, embed Vue bundles with `<microfrontend>` |
 | `dynamia-platform:vue-frontend` | Use `@dynamia-tools/sdk`, `ui-core`, `vue` and the extension SDKs; choose between Vue, ZK and both |
 | `dynamia-platform:dates` | Migrate legacy `java.util.Date` code to `java.time` with `DateTimeUtils`, `LocalDateRange` and `QueryConditions` |

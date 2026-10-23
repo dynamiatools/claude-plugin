@@ -48,7 +48,7 @@ crudService.find(Book.class, id);
 crudService.find(Book.class, QueryParameters.with("category", category).orderBy("title", true));
 crudService.count(Book.class, QueryParameters.with("stockStatus", StockStatus.IN_STOCK));
 ```
-Existing: `save/create/update/delete/find/findAll/count`, `findByExample`, `executeQuery(QueryBuilder, params)`, `executeProjection` (count/sum/max/avg), `batchUpdate`, `updateField`, `increaseCounter`, `saveWithinTransaction`/`executeWithinTransaction`, `reload`. Filters: `QueryParameters` + `QueryConditions` (`eq`, `between`...). Do not reinvent them.
+Existing: `save/create/update/delete/find/findAll/count`, `findByExample`, `executeQuery(QueryBuilder, params)`, `executeProjection` (count/sum/max/avg), `batchUpdate`, `updateField`, `increaseCounter`, `saveWithinTransaction`/`executeWithinTransaction`, `reload`. Filters: `QueryParameters` + `QueryConditions` (`eq`, `between`...). Do not reinvent them. A `String` value in `QueryParameters` is a `LIKE` by default: use `QueryConditions.eq` for exact matches. Full guide, OR groups and custom conditions: `references/crud-service.md`.
 
 ## Navigation: `ModuleProvider`
 Naming, ids, merging and ordering rules: `references/module-conventions.md`.
@@ -153,6 +153,7 @@ params: { orderBy: title }
 | Topic | File |
 |---|---|
 | Actions that run in ZK and for REST clients (headless, replay, flow steps) | `references/headless-actions.md` |
+| `CrudService` methods, `QueryParameters`, the String-is-LIKE default, `QueryConditions`, writing new conditions | `references/crud-service.md` |
 | Collections and detached entities, `@InitializeOnLoad`, `LoadPlan`, OSIV off | `references/loading-collections.md` |
 | `BeanMap`, `BeanMapEntityMapper`, automatic DTOs | `references/bean-map-dto.md` |
 | `QueryBuilder`, `QueryConditions` | `references/query-builder.md` |
