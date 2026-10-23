@@ -32,8 +32,8 @@ data class PaymentsProperties(val baseUrl: URI, val apiToken: String, val timeou
 - Coroutines in Spring MVC or WebFlux: `suspend` controller functions are supported; see `dynamia-kotlin:coroutines`.
 
 ## Testing
-- JUnit: Boot 4.1 provides **JUnit 6** by default (per-class lifecycle lets `@BeforeAll` be non-static); Boot 4.0 and the Dynamia projects use JUnit 5: follow the project.
-- Mocking: **MockK** is Spring's recommendation for Kotlin classes, with **SpringMockK** (`@MockkBean`, `@SpykBean`); **Mockito** works too (`@MockitoBean`, `mockito-kotlin`). Consistency wins: a Dynamia ERP Kotlin module chose JUnit 5 + Mockito to match the rest of its repo. Don't introduce a second mocking library without the team agreeing.
+- JUnit: Boot 4 provides **JUnit Jupiter 6** by default (6.0.3 in the 4.0.5 and 4.1.1 BOMs; the Spring Boot Kotlin reference notes the per-class lifecycle that lets `@BeforeAll` be non-static); a project may pin 5.x on purpose: follow its build file.
+- Mocking: **MockK** is Spring's recommendation for Kotlin classes, with **SpringMockK** (`@MockkBean`, `@SpykBean`); **Mockito** works too (`@MockitoBean`, `mockito-kotlin`). Consistency wins: a Dynamia ERP Kotlin module chose JUnit + Mockito to match the rest of its repo. Don't introduce a second mocking library without the team agreeing.
 - `kotlin-test-junit5` for assertions; `@AutoConfigureMockMvc` is explicit in Boot 4; slices and `RestTestClient` as in `dynamia-java:spring-boot`.
 - Test names in backticks are fine (`fun \`rejects expired token\`()`), keep them short.
 

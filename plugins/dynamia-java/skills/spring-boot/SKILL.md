@@ -21,7 +21,7 @@ Check the version first (`spring-boot-dependencies` / parent in the `pom.xml`; t
 - **Startup and config hygiene**: `spring.jpa.open-in-view=false`, fail fast on missing required config, no `System.out`, no `@SuppressWarnings` to hide problems.
 
 ## Testing
-- Unit tests without Spring wherever possible (plain JUnit 5 + Mockito).
+- Unit tests without Spring wherever possible (plain JUnit + Mockito). Spring Boot 4 BOMs manage JUnit Jupiter 6 (6.0.3 in the 4.0.5 and 4.1.1 BOMs); a project may pin an older 5.x on purpose, so follow its `pom.xml`.
 - Slices: `@WebMvcTest`, `@DataJpaTest`; full context `@SpringBootTest` sparingly. Boot 4: `@MockitoBean`/`@MockitoSpyBean` replace `@MockBean`/`@SpyBean`; add `@AutoConfigureMockMvc` explicitly; `RestTestClient` is new; each technology has a `spring-boot-starter-<tech>-test`.
 - Real databases with Testcontainers (2.x in Boot 4) for SQL that H2 does not reproduce.
 - Assert behavior and HTTP contracts, not implementation.
