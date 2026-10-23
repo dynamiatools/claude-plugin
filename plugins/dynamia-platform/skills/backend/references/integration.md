@@ -32,16 +32,16 @@ ObjectsContext.with(branch).run(() -> {
 - `legacyThreadLocalBridge(true)` keeps reading old thread-local values while migrating. Prefer `ScopedValue` for new per-request state; never store request state in a static field.
 
 ## Messaging (`ms`)
-A small in-process publish/subscribe: `MessageService.createChannel(name)`, `publish(channel, message)` (a `Message`, `String` as `TextMessage`, `Map` as `MapMessage`, or any `Serializable`), subscribe with a `MessageListener`/`MessageChannelSubscription`. Message types: `TextMessage`, `MapMessage`, `NumberMessage`, `ObjectMessage`, `ByteArrayMessage`. Implementations: `SimpleMessageService`, `TransactionalSimpleMessageService` (delivers after commit), `SpringApplicationEventsMessageService`. Use it to decouple modules inside one JVM; it is not a broker (no persistence, no cross-node delivery). Check which implementation the app wires.
+A small in-process publish/subscribe: `MessageService.createChannel(name)`, `publish(channel, message)` (a `Message`, `String` as `TextMessage`, `Map` as `MapMessage`, or any `Serializable`), subscribe with a `MessageListener`/`MessageChannelSubscription`. Message types: `TextMessage`, `MapMessage`, `NumberMessage`, `ObjectMessage`, `ByteArrayMessage`. Implementations: `SimpleMessageService`, `TransactionalSimpleMessageService` (the same, with each publish running in a Spring transaction), `SpringApplicationEventsMessageService`. Use it to decouple modules inside one JVM; it is not a broker (no persistence, no cross-node delivery). Check which implementation the app wires.
 
 ## Search (`search`)
-`SearchResultProvider` (beans): `getId()`, `getName()`, `search(query)` returns `SearchResult`s; `SearchService` aggregates the providers (global search box, navigation search). Register one per searchable area; return few, relevant results fast; `SearchResultCommandExecutor` runs the chosen result.
+`SearchResultProvider` (beans): `getId()`, `getName()`, `search(query)` returns `SearchResult`s; `SearchService` controls the application's global search over the registered providers. Register one per searchable area; return few, relevant results fast; `SearchResultCommandExecutor` runs the chosen result.
 
 ## ProgressMonitor
 `ProgressMonitor` carries `max`, `current`, `message`, `messages`, `stop()`/`isStopped()`, and a listener (`onProgressChanged`). Pass one to long jobs, update it, and let the UI or the headless `UIProgress` follow. Check `isStopped()` inside loops so users can cancel (file-importer works this way). Combine with `SchedulerUtil.run(...)`.
 
 ## Reactive (`reactive`)
-A small React/Vue-style system for Java UIs: `Reactive.ref(value)` (`Ref`, `set`/`get`), `Reactive.computed(() -> ...)` (lazy derived value), `Reactive.effect(() -> ...)` (re-runs when the refs it read change), `Signal`. Dependencies are tracked automatically. Use it in view models and component logic, not in services.
+A small React/Vue-style system for Java UIs: `Reactive.ref(value)` (`Ref`, `set`/`get`), `Reactive.computed(() -> ...)` (lazy derived value), `Reactive.effect(() -> ...)` (re-runs when the refs it read change). `Signal` is the internal subscriber tracker. Dependencies are tracked automatically. Use it in view models and component logic, not in services.
 
 ## Rules
 - Prefer injection; use `Containers` at the edges and `ObjectsContext` for per-request "current" objects.
