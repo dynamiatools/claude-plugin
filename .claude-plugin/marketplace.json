@@ -18,6 +18,11 @@
       "name": "dynamia-platform",
       "source": "./plugins/dynamia-platform",
       "description": "Work with Dynamia Platform: backend patterns, ZK, Vue frontend, live docs from GitHub and the dynamia CLI."
+    },
+    {
+      "name": "dynamia-ui",
+      "source": "./plugins/dynamia-ui",
+      "description": "UI and UX tools for Claude Code: extract, improve or create a design system; review UX, mobile, SEO, offline and performance; evaluate the frontend stack."
     }
   ]
 }

@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""ds-scan: count the design values a frontend project really uses.
+
+Walks style and markup files and reports colors, fonts, font sizes and weights,
+spacing, radii, shadows and CSS custom properties, with how often each appears.
+Python standard library only. Read-only.
+
+    ds-scan [PATH] [--top N] [--base N] [--json]
+"""
+import argparse
+import json
+import os
+import re
+import sys
+from collections import Counter, defaultdict
+
+EXTS = {".css", ".scss", ".sass", ".less", ".vue", ".svelte", ".tsx", ".jsx",
+        ".ts", ".js", ".html", ".htm", ".zul", ".json"}
+SKIP_DIRS = {"node_modules", ".git", "dist", "build", "target", "vendor", "out",
+             ".next", ".nuxt", ".output", "coverage", "__pycache__", "design-system"}
+MAX_BYTES = 1_000_000
+
+HEX = re.compile(r"(?<!href=\")(?<!href=')(?<![\w&])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b")
+FUNC_COLOR = re.compile(r"\b(?:rgba?|hsla?)\(\s*[^)]*\)", re.I)
+DECL = re.compile(r"(?P<prop>--[\w-]+|[a-zA-Z-]+)\s*:\s*(?P<val>[^;{}\n]+)")
+VAR_USE = re.compile(r"var\(\s*(--[\w-]+)")
+LENGTH = re.compile(r"(-?\d*\.?\d+)(px|rem|em)\b")
+ARBITRARY = re.compile(r"\b[a-z-]+-\[(\d*\.?\d+(?:px|rem|em))\]")
+TOKEN_LINE = re.compile(r"^\s*--[\w-]+\s*:")
+SPACING_PROPS = re.compile(r"^(margin|padding)(-(top|right|bottom|left|inline|block)(-(start|end))?)?$|^(row-|column-)?gap$")
+HINTS = {"tailwindcss": "tailwind", "vue": "vue", "nuxt": "nuxt", "react": "react",
+         "next": "next", "svelte": "svelte", "vuetify": "vuetify", "@mui/material": "mui",
+         "bootstrap": "bootstrap", "primevue": "primevue", "quasar": "quasar",
+         "@ionic/vue": "ionic", "@capacitor/core": "capacitor", "@angular/core": "angular"}
+
+
+def norm_hex(h):
+    h = h.lower()
+    if len(h) in (4, 5):  # #rgb / #rgba
+        h = "#" + "".join(c * 2 for c in h[1:])
+    return h
+
+
+def rgb_of(h):
+    return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def is_token_file(name):
+    n = name.lower()
+    return n.startswith("tailwind.config") or n.endswith("tokens.json") or n.startswith("theme.")
+
+
+def walk(root):
+    if os.path.isfile(root):
+        yield root
+        return
+    for d, dirs, files in os.walk(root):
+        dirs[:] = sorted(x for x in dirs if x not in SKIP_DIRS)
+        for f in sorted(files):
+            p = os.path.join(d, f)
+            if os.path.splitext(f)[1].lower() in EXTS and ".min." not in f and not os.path.islink(p):
+                yield p
+
+
+def scan(root, base=4):
+    c = defaultdict(Counter)
+    raw, defined = Counter(), Counter()
+    tokens, used = {}, Counter()
+    sources, hints, files = [], set(), 0
+    for p in walk(root):
+        name = os.path.basename(p)
+        try:
+            if os.path.getsize(p) > MAX_BYTES:
+                continue
+            with open(p, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        files += 1
+        rel = os.path.relpath(p, root) if os.path.isdir(root) else name
+        tokfile = is_token_file(name)
+        if tokfile:
+            sources.append(rel)
+        if name == "package.json":
+            try:
+                pkg = json.loads(text)
+                deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                hints.update(v for k, v in HINTS.items() if k in deps)
+            except ValueError:
+                pass
+            continue
+        if name.endswith(".json") and not tokfile:
+            continue
+        for u in VAR_USE.findall(text):
+            used[u] += 1
+        for line in text.splitlines():
+            is_def = tokfile or bool(TOKEN_LINE.match(line))
+            for m in HEX.findall(line):
+                (defined if is_def else raw)[norm_hex(m)] += 1
+            for m in FUNC_COLOR.findall(line):
+                (defined if is_def else raw)[re.sub(r"\s+", "", m.lower())] += 1
+            for a in ARBITRARY.findall(line):
+                c["arbitrary"][a] += 1
+            for m in DECL.finditer(line):
+                prop, val = m.group("prop").lower(), m.group("val").strip().strip("'\"")
+                if prop.startswith("--"):
+                    tokens.setdefault(prop, val)
+                elif prop == "font-family" and not val.startswith(("var(", "inherit")):
+                    c["fonts"][val.split(",")[0].strip().strip("'\"")] += 1
+                elif prop == "font-size" and not val.startswith("var("):
+                    c["font_sizes"][val] += 1
+                elif prop == "font-weight" and not val.startswith("var("):
+                    c["font_weights"][val] += 1
+                elif prop == "border-radius" and not val.startswith("var("):
+                    c["radius"][re.sub(r"\s+", " ", val)] += 1
+                elif prop == "box-shadow" and val != "none" and not val.startswith("var("):
+                    c["shadows"][re.sub(r"\s+", " ", val)] += 1
+                elif SPACING_PROPS.match(prop):
+                    for num, unit in LENGTH.findall(val):
+                        if float(num) != 0:
+                            c["spacing"][num.rstrip("0").rstrip(".") + unit if "." in num else num + unit] += 1
+    off = Counter()
+    for v, n in c["spacing"].items():
+        num, unit = LENGTH.match(v).groups()
+        px = abs(float(num)) * (16 if unit in ("rem", "em") else 1)
+        if px % base:
+            off[v] = n
+    colors = {k: {"raw": raw[k], "defined": defined[k]} for k in set(raw) | set(defined)}
+    return {
+        "files": files, "sources": sources, "stack_hints": sorted(hints),
+        "colors": colors, "near_duplicates": near_duplicates(colors),
+        "tokens": {"declared": len(tokens), "unused": sorted(t for t in tokens if not used[t]),
+                   "values": tokens},
+        "off_scale_spacing": dict(off),
+        **{k: dict(v) for k, v in c.items()},
+    }
+
+
+def near_duplicates(colors, limit=12, top=40):
+    hexes = sorted((k for k in colors if re.fullmatch(r"#[0-9a-f]{6}", k)),
+                   key=lambda k: -(colors[k]["raw"] + colors[k]["defined"]))[:top]
+    pairs = []
+    for i, a in enumerate(hexes):
+        for b in hexes[i + 1:]:
+            d = sum((x - y) ** 2 for x, y in zip(rgb_of(a), rgb_of(b))) ** 0.5
+            if d <= limit:
+                pairs.append(sorted([a, b]))
+    return pairs
+
+
+def fmt(report, top):
+    out = [f"files scanned: {report['files']}"]
+    if report["stack_hints"]:
+        out.append("stack hints: " + ", ".join(report["stack_hints"]))
+    if report["sources"]:
+        out.append("token sources: " + ", ".join(report["sources"]))
+    t = report["tokens"]
+    out.append(f"css custom properties: {t['declared']} declared, {len(t['unused'])} never used via var()")
+    if t["unused"]:
+        out.append("  unused: " + ", ".join(t["unused"][:top]))
+    cols = sorted(report["colors"].items(), key=lambda kv: -(kv[1]["raw"] + kv[1]["defined"]))
+    out.append(f"\ncolors ({len(cols)} distinct; raw = used outside a token definition)")
+    for k, v in cols[:top]:
+        out.append(f"  {k}  raw x{v['raw']}  defined x{v['defined']}")
+    if report["near_duplicates"]:
+        out.append("near-duplicate colors: " + "; ".join(f"{a}~{b}" for a, b in report["near_duplicates"][:top]))
+    for key, title in (("fonts", "font families"), ("font_sizes", "font sizes"),
+                       ("font_weights", "font weights"), ("spacing", "spacing"),
+                       ("off_scale_spacing", "spacing off the scale"), ("radius", "border radius"),
+                       ("shadows", "shadows"), ("arbitrary", "tailwind arbitrary values")):
+        items = sorted(report.get(key, {}).items(), key=lambda kv: -kv[1])
+        if items:
+            out.append(f"\n{title} ({len(items)} distinct)")
+            out.extend(f"  {k}  x{n}" for k, n in items[:top])
+    return "\n".join(out)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Count the design values a frontend project uses.")
+    ap.add_argument("path", nargs="?", default=".")
+    ap.add_argument("--top", type=int, default=15, help="rows per section (default 15)")
+    ap.add_argument("--base", type=int, default=4, help="spacing grid in px (default 4)")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    if not os.path.exists(a.path):
+        print(f"ds-scan: no such path: {a.path}", file=sys.stderr)
+        return 2
+    report = scan(a.path, a.base)
+    print(json.dumps(report, indent=1, sort_keys=True) if a.json else fmt(report, a.top))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
