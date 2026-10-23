@@ -1,0 +1,11 @@
+{
+  "name": "dynamia-kotlin",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mario Serrano"
+  },
+  "description": "Kotlin for backend work in Claude Code: idioms and Java interop, coroutines, Kotlin with Spring Boot 4, Ktor and Exposed services, Gradle and Maven builds, and a Kotlin review checklist.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugins/tree/master/plugins/dynamia-kotlin",
+  "repository": "https://github.com/dynamiatools/claude-plugins"
+}
