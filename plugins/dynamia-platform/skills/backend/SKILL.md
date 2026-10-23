@@ -154,6 +154,7 @@ params: { orderBy: title }
 |---|---|
 | Actions that run in ZK and for REST clients (headless, replay, flow steps) | `references/headless-actions.md` |
 | `CrudService` methods, `QueryParameters`, the String-is-LIKE default, `QueryConditions`, writing new conditions | `references/crud-service.md` |
+| `EntityHandler` and the `DomainUtils` helpers | `references/entity-handler-domain-utils.md` |
 | Collections and detached entities, `@InitializeOnLoad`, `LoadPlan`, OSIV off | `references/loading-collections.md` |
 | `BeanMap`, `BeanMapEntityMapper`, automatic DTOs | `references/bean-map-dto.md` |
 | `QueryBuilder`, `QueryConditions` | `references/query-builder.md` |
@@ -162,6 +163,7 @@ params: { orderBy: title }
 | Navigation scope (`ScopedValue`), app metadata, `/api` vs `/apps/api` | `references/navigation-metadata.md` |
 | SaaS multi-tenancy: `@TenantId`, `AccountTenants`, `AccountServiceAPI`, root tenant | `references/saas-tenancy.md` |
 | Dates: legacy `Date` to `java.time` | skill `dynamia-platform:dates` |
+| Extensions: entity-files, reports, http-functions, finances | skill `dynamia-platform:extensions` |
 
 ## Anti-patterns
 Anemic entities; services injected into entities; `EntityManager`/loose JPQL in services; field injection (`@Autowired` on a field; use the constructor); swallowing exceptions (`catch (Exception e) { e.printStackTrace(); }`); validating in `@PrePersist`; `autofields: true` in production descriptors without review.
