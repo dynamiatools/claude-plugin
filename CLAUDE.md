@@ -17,7 +17,7 @@ plugins/<name>/
 ```
 
 ## Rules for every plugin
-- **Independent.** A plugin never calls another plugin's skills, scripts or config. Everything it needs ships inside its folder.
+- **Independent, with optional pointers.** A plugin works fully on its own: everything it needs ships inside its folder, and it never calls another plugin's scripts or reads its config. It may *point* to a sibling plugin's skill in text, only as an optional extra: say "if `<plugin>` is installed (its skills are listed as `/<plugin>:<skill>`), use `/<plugin>:<skill>`; otherwise suggest `/plugin install <plugin>@dynamia-tools`". Never make a pointer a required step, never depend on a sibling's output format, and recommend an install at most once per topic.
 - **English** in code, docs, skills and commit messages. Chat with the user may be Spanish.
 - **Small and cheap.** Short skills, no hooks unless they pay for themselves. A hook is silent outside its context, fails open, has a short timeout, and blocks only a case that is unmistakable.
 - **Skill front matter** has `name` (equal to its folder) and a `description` that says what it does and when to use it. Avoid an unquoted `: ` inside the value. The plugin name is already the prefix: name the skill `test`, not `ms-test`.
