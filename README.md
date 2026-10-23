@@ -25,6 +25,7 @@ claude plugin install <plugin>@dynamia-tools
 | [`dynamia-colombia`](plugins/dynamia-colombia) | Colombian tax and compliance: DIAN glossary, electronic invoicing, información exógena, taxes, and citing current rules from official sources. 5 skills, a NIT tool, no hooks | `dynamia-colombia@dynamia-tools` |
 | [`dynamia-java`](plugins/dynamia-java) | Modern Java 25 and Spring Boot 4: idioms, concurrency, Spring Boot and Hibernate 7 practices, upgrades, Java review. 6 skills, no hooks | `dynamia-java@dynamia-tools` |
 | [`dynamia-kotlin`](plugins/dynamia-kotlin) | Kotlin for backends: idioms, coroutines, Spring Boot 4, Ktor and Exposed, Gradle and Maven, review. 6 skills, no hooks | `dynamia-kotlin@dynamia-tools` |
+| [`dynamia-test`](plugins/dynamia-test) | Testing: strategy and review, JUnit 6 and Spring Boot 4, Vitest and Playwright, failing-test triage, coverage and mutation gates. 5 skills, no hooks | `dynamia-test@dynamia-tools` |
 
 Each works on its own; they only point to each other as optional extras, and recommend installing the sibling when it is missing. Together they cover the workflow (`dynamia`), the way of working (`dynamia-craft`), the framework (`dynamia-platform`) and the interface (`dynamia-ui`).
 
