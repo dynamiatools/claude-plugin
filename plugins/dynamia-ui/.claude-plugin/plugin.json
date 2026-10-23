@@ -1,0 +1,11 @@
+{
+  "name": "dynamia-ui",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mario Serrano"
+  },
+  "description": "UI and UX tools for Claude Code: extract, improve or create a design system; review UX, mobile, SEO, offline and performance; evaluate the frontend stack.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugins/tree/master/plugins/dynamia-ui",
+  "repository": "https://github.com/dynamiatools/claude-plugins"
+}
