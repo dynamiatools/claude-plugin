@@ -139,6 +139,7 @@ params: { orderBy: title }
 - `entityfilters`: filter panel with the same `fields` syntax. `tree`: hierarchies. `json`: API/autocomplete projection (`parent.id` dot paths, `params.conditions`).
 - Converters: `converters.Date`, `converters.LocalDateTime`, `converters.Currency`.
 - `ViewCustomizer<FormView<T>>` is referenced by class name from `customizer:`; it needs no annotation. Use it only for reactive logic YAML cannot express (`view.getFieldComponent("x").hide()`, `view.addEventListener(FormView.ON_VALUE_CHANGED, ...)`).
+- Every key and how descriptors are found and merged: `references/view-descriptors.md`.
 - Full schema and field components: the framework's `docs/frontend/FIELD_COMPONENTS.md` and `docs/backend/`.
 
 ## New CRUD entity: checklist
@@ -155,6 +156,8 @@ params: { orderBy: title }
 | Actions that run in ZK and for REST clients (headless, replay, flow steps) | `references/headless-actions.md` |
 | `CrudService` methods, `QueryParameters`, the String-is-LIKE default, `QueryConditions`, writing new conditions | `references/crud-service.md` |
 | `EntityHandler` and the `DomainUtils` helpers | `references/entity-handler-domain-utils.md` |
+| All `dynamia.*` configuration properties and defaults | `references/configuration-properties.md` |
+| YAML view descriptors: every view and field key, `extends`, components | `references/view-descriptors.md` |
 | Collections and detached entities, `@InitializeOnLoad`, `LoadPlan`, OSIV off | `references/loading-collections.md` |
 | `BeanMap`, `BeanMapEntityMapper`, automatic DTOs | `references/bean-map-dto.md` |
 | `QueryBuilder`, `QueryConditions` | `references/query-builder.md` |
