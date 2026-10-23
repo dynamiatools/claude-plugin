@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""co-nit: compute and check the DIAN check digit (dígito de verificación, DV) of a Colombian NIT.
+
+    co-nit dv 900302344        prints 1
+    co-nit check 900.302.344-1 prints "ok" (exit 0) or "invalid, expected DV 1" (exit 1)
+    co-nit split 900.302.344-1 prints the digits and the DV
+
+Standard library only. The algorithm is the DIAN one: weights 3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47,
+53, 59, 67, 71 applied from the rightmost digit, sum modulo 11; a result of 0 or 1 is the DV, otherwise
+the DV is 11 minus the result.
+"""
+import re
+import sys
+
+WEIGHTS = (3, 7, 13, 17, 19, 23, 29, 37, 41, 43, 47, 53, 59, 67, 71)
+
+
+def digits_only(nit):
+    return re.sub(r"\D", "", nit)
+
+
+def dv(nit):
+    """Check digit of the NIT body (digits only, up to 15)."""
+    n = digits_only(nit)
+    if not n or len(n) > len(WEIGHTS):
+        raise ValueError("a NIT has between 1 and 15 digits")
+    total = sum(int(d) * w for d, w in zip(reversed(n), WEIGHTS))
+    r = total % 11
+    return r if r in (0, 1) else 11 - r
+
+
+def split(text):
+    """Split '900.302.344-1' into ('900302344', 1); the DV is None when the text has no '-DV' part."""
+    text = text.strip()
+    m = re.fullmatch(r"([\d.\s]+?)(?:\s*-\s*(\d))?", text)
+    if not m or not digits_only(m.group(1)):
+        raise ValueError(f"not a NIT: {text!r}")
+    return digits_only(m.group(1)), (int(m.group(2)) if m.group(2) is not None else None)
+
+
+def check(text):
+    """True when the text carries a DV and it matches the NIT body."""
+    body, given = split(text)
+    if given is None:
+        raise ValueError("no check digit given, use the form 900302344-1")
+    return dv(body) == given
+
+
+def main(argv):
+    if len(argv) != 3 or argv[1] not in ("dv", "check", "split"):
+        print(__doc__.strip().splitlines()[0], file=sys.stderr)
+        print("usage: co-nit dv|check|split <nit>", file=sys.stderr)
+        return 2
+    cmd, value = argv[1], argv[2]
+    try:
+        if cmd == "dv":
+            print(dv(split(value)[0]))
+        elif cmd == "split":
+            body, given = split(value)
+            print(f"{body} {given if given is not None else ''}".rstrip())
+        else:
+            body, given = split(value)
+            if given is None:
+                print("no check digit given, use the form 900302344-1", file=sys.stderr)
+                return 2
+            expected = dv(body)
+            if expected == given:
+                print("ok")
+            else:
+                print(f"invalid, expected DV {expected}")
+                return 1
+    except ValueError as e:
+        print(f"co-nit: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
