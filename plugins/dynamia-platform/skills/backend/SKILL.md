@@ -39,7 +39,7 @@ public class Book extends BaseEntity {
 - Domain logic (`isActive()`, `calcTotal()`) belongs in the entity; logic needing injected services does not.
 - Attachments: `EntityFile` (extension `entity-files`) via `@OneToOne`.
 - Dates in `BaseEntity` are `java.time`; filter with `LocalDate`/`LocalDateTime`, never `java.util.Date`.
-- Lazy collections: with open-in-view off (check `dynamia.app.open-persistence-in-view` and `spring.jpa.open-in-view`), an entity returned by `find` is detached. Mark collections the UI walks with `@InitializeOnLoad` or load them with `crudService.reload(entity, "details")`. Do not touch `.size()` to force a load. *(Confirm in the project's version.)*
+- Lazy collections: with open-in-view off (`dynamia.app.open-persistence-in-view=false`), an entity returned by `find`, `load`, `reload` or `findSingle` is detached. Declare what travels with it using `@InitializeOnLoad` (class, field or getter) or ask at the call site: `crudService.load(Type.class, id, "detalles")`. Only the outermost call loads. Do not touch `.size()` to force a load. Details: `references/loading-collections.md`.
 
 ## Persistence: `CrudService`
 Inject it (constructor) or, where injection does not reach, `DomainUtils.lookupCrudService()`. Never use `EntityManager` or loose JPQL in services.
@@ -48,9 +48,10 @@ crudService.find(Book.class, id);
 crudService.find(Book.class, QueryParameters.with("category", category).orderBy("title", true));
 crudService.count(Book.class, QueryParameters.with("stockStatus", StockStatus.IN_STOCK));
 ```
-Existing: `save/create/update/delete/find/findAll/count`, `findByExample`, `executeQuery(QueryBuilder, params)`, `executeProjection` (count/sum/max/avg), `batchUpdate`, `updateField`, `increaseCounter`, `saveWithinTransaction`/`executeWithinTransaction`, `reload`. Filters: `QueryParameters` + `QueryConditions` (`eq`, `between`...). Do not reinvent them.
+Existing: `save/create/update/delete/find/findAll/count`, `findByExample`, `executeQuery(QueryBuilder, params)`, `executeProjection` (count/sum/max/avg), `batchUpdate`, `updateField`, `increaseCounter`, `saveWithinTransaction`/`executeWithinTransaction`, `reload`. Filters: `QueryParameters` + `QueryConditions` (`eq`, `between`...). Do not reinvent them. A `String` value in `QueryParameters` is a `LIKE` by default: use `QueryConditions.eq` for exact matches. Full guide, OR groups and custom conditions: `references/crud-service.md`.
 
 ## Navigation: `ModuleProvider`
+Naming, ids, merging and ordering rules: `references/module-conventions.md`.
 ```java
 @Provider
 public class LibraryModuleProvider implements ModuleProvider {
@@ -76,7 +77,7 @@ public class ReprocessAction extends AbstractCrudAction {
     }
 }
 ```
-`@InstallAction` self-registers. `setApplicableClass` limits it to an entity; `setGroup(ActionGroup.get("CRUD"))` puts it with the standard toolbar; override `isEnabled(Object)` / `isVisible()` for rules; inside use the inherited `crudService()`. Long work: `ProgressMonitor` + `SchedulerUtil`, not the UI thread. Name `VerbNounAction`.
+`@InstallAction` self-registers. To make an action work for REST clients too, mark it `HeadlessCapable` and follow `references/headless-actions.md`. `setApplicableClass` limits it to an entity; `setGroup(ActionGroup.get("CRUD"))` puts it with the standard toolbar; override `isEnabled(Object)` / `isVisible()` for rules; inside use the inherited `crudService()`. Long work: `ProgressMonitor` + `SchedulerUtil`, not the UI thread. Name `VerbNounAction`.
 
 ## Validators and listeners
 `Validator<T>.validate(T)` is `void` and fails by **throwing** `ValidationError`; it runs on `CrudService.create/update/save`. Register with `@Provider`. Never validate in `@PrePersist`.
@@ -147,6 +148,22 @@ params: { orderBy: title }
 4. `{Entity}Form.yml` and `{Entity}Table.yml` (or `{Entity}Crud.yml` if autofields is enough).
 5. Actions only for non-CRUD operations; `ViewCustomizer` only for what YAML cannot do.
 6. Run the app's tests and open the page; a CRUD that compiles can still fail on a bad descriptor.
+
+## References (read the one you need)
+| Topic | File |
+|---|---|
+| Actions that run in ZK and for REST clients (headless, replay, flow steps) | `references/headless-actions.md` |
+| `CrudService` methods, `QueryParameters`, the String-is-LIKE default, `QueryConditions`, writing new conditions | `references/crud-service.md` |
+| `EntityHandler` and the `DomainUtils` helpers | `references/entity-handler-domain-utils.md` |
+| Collections and detached entities, `@InitializeOnLoad`, `LoadPlan`, OSIV off | `references/loading-collections.md` |
+| `BeanMap`, `BeanMapEntityMapper`, automatic DTOs | `references/bean-map-dto.md` |
+| `QueryBuilder`, `QueryConditions` | `references/query-builder.md` |
+| `ModuleProvider` naming and rules | `references/module-conventions.md` |
+| Utility classes, `SchedulerUtil` (background work, cron) | `references/utilities.md` |
+| Navigation scope (`ScopedValue`), app metadata, `/api` vs `/apps/api` | `references/navigation-metadata.md` |
+| SaaS multi-tenancy: `@TenantId`, `AccountTenants`, `AccountServiceAPI`, root tenant | `references/saas-tenancy.md` |
+| Dates: legacy `Date` to `java.time` | skill `dynamia-platform:dates` |
+| Extensions: entity-files, reports, http-functions, finances | skill `dynamia-platform:extensions` |
 
 ## Anti-patterns
 Anemic entities; services injected into entities; `EntityManager`/loose JPQL in services; field injection (`@Autowired` on a field; use the constructor); swallowing exceptions (`catch (Exception e) { e.printStackTrace(); }`); validating in `@PrePersist`; `autofields: true` in production descriptors without review.

@@ -53,6 +53,9 @@ Composables: `useViewer`, `useView`, `useForm`, `useTable`, `useCrud`, `useEntit
 
 If the project already has a convention for this, follow it; if it is unclear which side a new screen belongs to, ask.
 
+## More
+Action flows (`runActionFlow`, steps, headless actions), field components (`FieldComponentRegistry`), table cells, dates and the theme package: `references/action-flows-and-fields.md`. Read it when a button must run a server action with questions, when a field needs a custom component, or when a date shows the wrong day.
+
 ## Rules
 - Keep API access in one place (a client instance or composable), not scattered `fetch` calls.
 - Never put tokens in source or `localStorage` without the project's decision on it; use what the app already does.
