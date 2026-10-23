@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { DevVar, Draft } from '../types'
 import { addArgv, listArgv, parseAdd, parseListing, rmArgv } from './devenv'
-import { registerPanels } from './panels'
+import { panelInput, panelPress, panelSelect, registerPanelCommands, registerPanels } from './panels'
 
 const vars = atom({ plugin: 'dynamia', key: 'vars' } as const, [] as DevVar[])
 const repos = atom({ plugin: 'dynamia', key: 'repos' } as const, [] as string[])
@@ -55,6 +55,7 @@ export const register: Register = on => {
       name: 'dynamia-env-panel',
       description: 'Development variables of the workspace: a panel, or dynamia-env-panel NAME=value [repo], rm NAME [repo], list',
     })
+    await registerPanelCommands($)
 
     return next(e)
   })
@@ -94,6 +95,7 @@ export const register: Register = on => {
     if (e.element === 'name') await update($, draft, one => ({ ...one, name: e.value.trim().toUpperCase() }))
     if (e.element === 'value') await update($, draft, one => ({ ...one, value: e.value }))
     if (e.kind === 'submit') await add($)
+    await panelInput($, e.element, e.value, e.kind === 'submit')
 
     return next(e)
   })
@@ -102,6 +104,7 @@ export const register: Register = on => {
     if (e.plugin === 'dynamia' && e.element === 'repo') {
       await update($, draft, one => ({ ...one, repo: e.value === ALL ? '' : e.value }))
     }
+    if (e.plugin === 'dynamia') await panelSelect($, e.element, e.value)
 
     return next(e)
   })
@@ -115,6 +118,7 @@ export const register: Register = on => {
       await update($, message, () => out.text.split('\n')[0] ?? '')
       await refresh($)
     }
+    await panelPress($, e.element)
 
     return next(e)
   })
