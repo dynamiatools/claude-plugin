@@ -1,6 +1,6 @@
 ---
 name: extensions
-description: Dynamia Platform extensions (dynamiatools/framework extensions folder) - entity-files (attach files to entities), reports (stored queries, REST, export), http-functions (versioned HTTP calls to third parties) and finances (document totals, taxes, money) - plus an index of dashboard, email-sms, file-importer, security and saas. Use when a task attaches or stores files, builds or runs reports, integrates an external HTTP API, or calculates invoices, taxes, discounts or withholdings.
+description: Dynamia Platform extensions (dynamiatools/framework extensions folder) - entity-files (attach files to entities), reports (stored queries, REST, export), http-functions (versioned HTTP calls to third parties) and finances (document totals, taxes, money) - dashboard, email-sms, file-importer, saas and a pointer to security. Use when a task attaches or stores files, builds or runs reports, integrates an external HTTP API, or calculates invoices, taxes, discounts or withholdings.
 ---
 
 # dynamia-platform:extensions
@@ -17,11 +17,11 @@ Extensions are separate modules with their own Maven coordinates, under `extensi
 | `reports` | Reports stored as queries with filters, run and export (XLSX, CSV, PDF), REST, dashboard widget, designer | `references/reports.md` |
 | `http-functions` | Call third-party HTTP APIs by name, versioned, configured in the database | `references/http-functions.md` |
 | `finances` | Invoices and documents: lines, taxes, discounts, withholdings, totals, money and currency | `references/finances.md` |
-| `saas` | Accounts, tenants | `dynamia-platform:backend` `references/saas-tenancy.md` |
-| `security` | Users, profiles, access tokens, restrictions (`SecurityTenancy` for root lookups) | extension README |
-| `dashboard` | Dashboards with widgets (the `report` widget comes from reports), `dashboard-sdk` / `dashboard-vue` | extension README |
-| `email-sms` | Email and SMS accounts, templates, send log (JavaMail, AWS) | extension README |
-| `file-importer` | Excel import with async processing, progress and stop; add your own `ImportAction` | extension README |
+| `saas` | Accounts, plans, payments, subdomains, remote status check, tenant export/import/clone | `references/saas.md`; tenants and isolation in `dynamia-platform:backend` `references/saas-tenancy.md` |
+| `security` | Users, profiles, access tokens, JWT, sessions, login hooks | `dynamia-platform:backend` `references/security-sessions.md` |
+| `dashboard` | Dashboards with widgets for ZK and JS front ends | `references/dashboard.md` |
+| `email-sms` | Email and SMS accounts, templates, async sending | `references/email-sms.md` |
+| `file-importer` | Excel import with progress and stop | `references/file-importer.md` |
 
 ## Rules for all of them
 - Most extensions are tenant-aware through the SaaS base entities (`entity-files` is not annotated with `@TenantId`; it carries its own `accountId`). Code that runs outside a request (jobs, startup) needs an explicit tenant (`saas-tenancy.md`).

@@ -44,7 +44,7 @@ A headless run executes the action once per question, plus one.
 - `SaveAction` and `DeleteAction` are headless. `SaveAndEditAction` and `SaveAndNewAction` opt out (they leave the form on a record, which is the client's job). Reports, entity-files and saas actions were declared headless too. An arch rule (R6) fails when a standard action is neither headless nor declared `FRONTEND`.
 - The hand-written `SaveRemoteAction`, `SaveFlowRemoteAction`, `DeleteRemoteAction`, `DeleteFlowRemoteAction` and `DeleteSupport` were removed: do not recreate them, make the local action headless.
 - `UIMessages.withDisplayer(...)` binds a displayer per execution with a `ScopedValue`.
-- Files: `UIFiles` over the `FileTransfer` SPI; uploads and downloads stream through a `TransferStore` (`/apps/api/transfers`). Check the design doc for current size limits before promising any.
+- Files: `UIFiles` over the `FileTransfer` SPI; uploads and downloads stream through a `TransferStore` (`/apps/api/transfers`). Transfers are limited by `dynamia.ui.files.max-file-size` (default 100 MB), `max-files` and `quota`; see `configuration-properties.md`.
 
 ## Config
 `dynamia.actions.flow.secret` signs the token (set it in production), `dynamia.actions.flow.token-ttl` is its lifetime. The token is bound to the action id, so a client cannot change what it confirmed.
