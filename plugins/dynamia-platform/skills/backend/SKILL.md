@@ -159,6 +159,7 @@ params: { orderBy: title }
 | `ModuleProvider` naming and rules | `references/module-conventions.md` |
 | Utility classes, `SchedulerUtil` (background work, cron) | `references/utilities.md` |
 | Navigation scope (`ScopedValue`), app metadata, `/api` vs `/apps/api` | `references/navigation-metadata.md` |
+| SaaS multi-tenancy: `@TenantId`, `AccountTenants`, `AccountServiceAPI`, root tenant | `references/saas-tenancy.md` |
 | Dates: legacy `Date` to `java.time` | skill `dynamia-platform:dates` |
 
 ## Anti-patterns

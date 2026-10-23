@@ -39,7 +39,7 @@ Ask only for the properties you will read: each one is read inside the transacti
 ## In the CRUD views (OSIV off)
 With `dynamia.app.open-persistence-in-view=false`, `CrudController.query()` attaches a `BeanMapEntityMapper` built from the properties of the table/list descriptor (`ViewDescriptorProperties`, which also reads `params.bindings` and `bind` paths). A mapper you set explicitly is never replaced.
 - Table rows, entity pickers, `DynamicListItemRenderer` and combobox/radiogroup automodel handle `BeanMap` rows.
-- `delete()` and `newEntity()` accept `BeanMap` rows. An action that needs the entity **reloads it by id** (`CrudView.buildActionEvent` already does, with the form's collections). Use `EntityMapperSupport.toEntity` when you have only a row.
+- `delete()` and `newEntity()` accept `BeanMap` rows. An action that needs the entity gets it **reloaded by id**: `CrudView.buildActionEvent` does it with the form's collections, and `AutoLoadBeanMapEntityActionFilter` replaces a `BeanMap` in the action event's data with the entity (`crudService.find(beanClass, id)`) when `BeanMap.isLoadable()` (it has a `beanClass` and an `id`). Do not reload it yourself in the action. Use `EntityMapperSupport.toEntity` when you have only a row.
 - Anything the view reads that is not a descriptor field (for example `row.getX().getY()` in a customizer) is not on a `BeanMap`: add the path to the descriptor or reload the entity.
 
 ## Typed DTOs
