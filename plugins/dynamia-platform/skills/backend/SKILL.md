@@ -159,6 +159,7 @@ params: { orderBy: title }
 | All `dynamia.*` configuration properties and defaults | `references/configuration-properties.md` |
 | YAML view descriptors: every view and field key, `extends`, components | `references/view-descriptors.md` |
 | Tests: JPA with H2, `ActionTester`, port contracts, arch rules | `references/testing.md` |
+| Security extension: filter chains, JWT, sessions, `CurrentUser`, login hooks | `references/security-sessions.md` |
 | Collections and detached entities, `@InitializeOnLoad`, `LoadPlan`, OSIV off | `references/loading-collections.md` |
 | `BeanMap`, `BeanMapEntityMapper`, automatic DTOs | `references/bean-map-dto.md` |
 | `QueryBuilder`, `QueryConditions` | `references/query-builder.md` |
