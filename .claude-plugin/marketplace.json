@@ -23,6 +23,11 @@
       "name": "dynamia-ui",
       "source": "./plugins/dynamia-ui",
       "description": "UI and UX tools for Claude Code: extract, improve or create a design system; review UX, mobile, SEO, offline and performance; evaluate the frontend stack."
+    },
+    {
+      "name": "dynamia-colombia",
+      "source": "./plugins/dynamia-colombia",
+      "description": "Colombian tax and compliance for Claude Code: DIAN glossary, electronic invoicing, informaci\u00f3n ex\u00f3gena (medios magn\u00e9ticos), taxes, and how to find and cite current rules from official sources."
     }
   ]
 }

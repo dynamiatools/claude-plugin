@@ -1,0 +1,11 @@
+{
+  "name": "dynamia-colombia",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mario Serrano"
+  },
+  "description": "Colombian tax and compliance knowledge for Claude Code: DIAN glossary, electronic invoicing, información exógena (medios magnéticos), taxes, and how to find and cite current rules from official sources.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugins/tree/master/plugins/dynamia-colombia",
+  "repository": "https://github.com/dynamiatools/claude-plugins"
+}
