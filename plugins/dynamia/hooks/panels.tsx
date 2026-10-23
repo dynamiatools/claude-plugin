@@ -42,14 +42,33 @@ async function addNote($: EngineInterface) {
   await refreshNotes($)
 }
 
+// The ui.input / ui.select / ui.press hooks live in register.tsx (one per event); they call these.
+export async function panelInput($: EngineInterface, element: string, value: string, submit: boolean) {
+  if (element === 'note') await update($, noteDraft, one => ({ ...one, text: value }))
+  if (element === 'note' && submit) await addNote($)
+}
+
+export async function panelSelect($: EngineInterface, element: string, value: string) {
+  if (element === 'note-type') await update($, noteDraft, one => ({ ...one, type: value }))
+}
+
+export async function panelPress($: EngineInterface, element: string) {
+  if (element === 'logs-refresh') await refreshLogs($, 20)
+  if (element === 'note-add') await addNote($)
+  if (element.startsWith('forget:')) {
+    const out = await run($, forgetArgv($.plugin.root, element.slice('forget:'.length)))
+    await update($, panelNote, () => out.text.split('\n')[0] ?? '')
+    await refreshNotes($)
+  }
+}
+
+// Called from the single session.start hook in register.tsx (the engine refuses a second one).
+export async function registerPanelCommands($: EngineInterface) {
+  await $.command.register({ name: 'dynamia-logs-panel', description: 'Recent actions of the workspace log (ms-workspace log)' })
+  await $.command.register({ name: 'dynamia-memory-panel', description: 'Workspace memory notes: browse, add, forget' })
+}
+
 export const registerPanels: Register = on => {
-  on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'dynamia-logs-panel', description: 'Recent actions of the workspace log (ms-workspace log)' })
-    await $.command.register({ name: 'dynamia-memory-panel', description: 'Workspace memory notes: browse, add, forget' })
-
-    return next(e)
-  })
-
   on('command.run', { command: 'dynamia-logs-panel' }, async $ => {
     await refreshLogs($, 20)
     await $.ui.open({ id: 'dynamia-logs', title: 'Dynamia logs', focus: true })
@@ -62,33 +81,6 @@ export const registerPanels: Register = on => {
     await $.ui.open({ id: 'dynamia-memory', title: 'Dynamia memory', focus: true })
 
     return { text: 'Dynamia memory panel opened.' }
-  })
-
-  on('ui.input', async ($, e, next) => {
-    if (e.plugin !== 'dynamia') return next(e)
-    if (e.element === 'note') await update($, noteDraft, one => ({ ...one, text: e.value }))
-    if (e.element === 'note' && e.kind === 'submit') await addNote($)
-
-    return next(e)
-  })
-
-  on('ui.select', async ($, e, next) => {
-    if (e.plugin === 'dynamia' && e.element === 'note-type') await update($, noteDraft, one => ({ ...one, type: e.value }))
-
-    return next(e)
-  })
-
-  on('ui.press', async ($, e, next) => {
-    if (e.plugin !== 'dynamia') return next(e)
-    if (e.element === 'logs-refresh') await refreshLogs($, 20)
-    if (e.element === 'note-add') await addNote($)
-    if (e.element.startsWith('forget:')) {
-      const out = await run($, forgetArgv($.plugin.root, e.element.slice('forget:'.length)))
-      await update($, panelNote, () => out.text.split('\n')[0] ?? '')
-      await refreshNotes($)
-    }
-
-    return next(e)
   })
 
   on('ui.render', { component: 'Pane', requestId: 'dynamia-logs' }, async ($, e) => {
