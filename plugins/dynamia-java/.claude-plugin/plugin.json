@@ -1,0 +1,11 @@
+{
+  "name": "dynamia-java",
+  "version": "0.1.0",
+  "author": {
+    "name": "Mario Serrano"
+  },
+  "description": "Modern Java 25 and Spring Boot 4 for Claude Code: idioms, concurrency with virtual threads and scoped values, Spring Boot and Hibernate 7 practices, upgrades and a Java review checklist.",
+  "license": "MIT",
+  "homepage": "https://github.com/dynamiatools/claude-plugins/tree/master/plugins/dynamia-java",
+  "repository": "https://github.com/dynamiatools/claude-plugins"
+}

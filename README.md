@@ -23,6 +23,7 @@ claude plugin install <plugin>@dynamia-tools
 | [`dynamia-platform`](plugins/dynamia-platform) | Work on [Dynamia Platform](https://dynamia.tools) projects: backend patterns, ZK, Vue frontend, live docs from GitHub and the `dynamia` CLI. 7 skills, 2 light hooks | `dynamia-platform@dynamia-tools` |
 | [`dynamia-ui`](plugins/dynamia-ui) | UI and UX: extract, improve or create a design system; review UX and mobile, SEO, offline, performance; stack advice; a `ds-scan` tool. 8 skills, 1 agent, no hooks | `dynamia-ui@dynamia-tools` |
 | [`dynamia-colombia`](plugins/dynamia-colombia) | Colombian tax and compliance: DIAN glossary, electronic invoicing, información exógena, taxes, and citing current rules from official sources. 5 skills, a NIT tool, no hooks | `dynamia-colombia@dynamia-tools` |
+| [`dynamia-java`](plugins/dynamia-java) | Modern Java 25 and Spring Boot 4: idioms, concurrency, Spring Boot and Hibernate 7 practices, upgrades, Java review. 6 skills, no hooks | `dynamia-java@dynamia-tools` |
 
 Each works on its own; they only point to each other as optional extras, and recommend installing the sibling when it is missing. Together they cover the workflow (`dynamia`), the way of working (`dynamia-craft`), the framework (`dynamia-platform`) and the interface (`dynamia-ui`).
 

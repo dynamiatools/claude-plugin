@@ -28,6 +28,11 @@
       "name": "dynamia-colombia",
       "source": "./plugins/dynamia-colombia",
       "description": "Colombian tax and compliance for Claude Code: DIAN glossary, electronic invoicing, informaci\u00f3n ex\u00f3gena (medios magn\u00e9ticos), taxes, and how to find and cite current rules from official sources."
+    },
+    {
+      "name": "dynamia-java",
+      "source": "./plugins/dynamia-java",
+      "description": "Modern Java 25 and Spring Boot 4 for Claude Code: idioms, concurrency, Spring Boot and Hibernate 7 practices, upgrades and a Java review checklist."
     }
   ]
 }
