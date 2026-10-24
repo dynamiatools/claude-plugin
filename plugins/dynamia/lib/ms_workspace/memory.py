@@ -9,6 +9,7 @@ from pathlib import Path
 from .core import Workspace, die
 
 TYPES = ("decision", "lesson", "gotcha", "handoff")
+USAGE = "usage: memory [add [--type T] [--batch B] [--title T] [--] <text>|list|search <text>|show <name>|forget <name>]"
 
 
 def mem_dir(ws: Workspace) -> Path:
@@ -101,16 +102,23 @@ def context_lines(ws: Workspace) -> list[str]:
 
 def cmd_memory(ws: Workspace, args: list[str]) -> int:
     sub, rest = (args[0], args[1:]) if args else ("list", [])
+    if sub in ("-h", "--help", "help") or (rest and rest[0] in ("-h", "--help")):
+        print(USAGE)
+        return 0
     if sub == "add":
         kind, batch, title, words = "lesson", "", "", []
         it = iter(rest)
         for a in it:
-            if a == "--type":
+            if a == "--":
+                words.extend(it)  # everything after -- is note text, even if it starts with --
+            elif a == "--type":
                 kind = next(it, "")
             elif a == "--batch":
                 batch = next(it, "")
             elif a == "--title":
                 title = next(it, "")
+            elif a.startswith("--"):
+                die(f"memory add: unknown option {a}\n{USAGE}")
             else:
                 words.append(a)
         text = " ".join(words) if words else sys.stdin.read()
@@ -158,4 +166,4 @@ def cmd_memory(ws: Workspace, args: list[str]) -> int:
         ws.log("memory.forget", "ok", "", n["batch"], n["name"])
         print(f"forgot {n['name']}")
         return 0
-    die("usage: memory [add [--type T] [--batch B] [--title T] <text>|list|search <text>|show <name>|forget <name>]")
+    die(USAGE)

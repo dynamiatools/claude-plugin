@@ -1346,6 +1346,13 @@ class TestMemory(Base):
         self.assertNotEqual(self.ws.ms("memory", "add", "--type", "lesson", input="  ").returncode, 0)
         self.assertNotEqual(self.ws.ms("memory", "show", "ghost").returncode, 0)
 
+    def test_add_rejects_unknown_option_and_help_saves_nothing(self):
+        self.assertNotEqual(self.ws.ms("memory", "add", "--bogus", "x").returncode, 0)
+        self.assertIn("usage", self.ws.ms("memory", "add", "--help").stdout)
+        self.assertIn("no notes", self.ws.ms("memory", "list").stdout)
+        self.assertEqual(self.ws.ms("memory", "add", "--", "--flag as text").returncode, 0)
+        self.assertIn("--flag as text", self.ws.ms("memory", "list").stdout)
+
     def test_ambiguous_reference_is_rejected(self):
         self.add("--title", "alpha one", "a")
         self.add("--title", "alpha two", "b")
